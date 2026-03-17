@@ -42,9 +42,7 @@ IMClaw 快速回复脚本
 import sys
 import os
 import json
-import shutil
 import argparse
-import mimetypes
 from pathlib import Path
 from datetime import datetime
 
@@ -121,31 +119,6 @@ def get_file_category(ext: str) -> str:
     return None
 
 
-def get_mime_type(file_path: Path) -> str:
-    """获取文件的 MIME 类型"""
-    mime_type, _ = mimetypes.guess_type(str(file_path))
-    if mime_type:
-        return mime_type
-    ext = file_path.suffix.lower()
-    mime_map = {
-        ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
-        ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml",
-        ".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime",
-        ".mp3": "audio/mpeg", ".wav": "audio/wav", ".ogg": "audio/ogg", ".m4a": "audio/mp4",
-        ".pdf": "application/pdf", ".zip": "application/zip",
-        ".rar": "application/vnd.rar", ".7z": "application/x-7z-compressed",
-        ".doc": "application/msword",
-        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        ".xls": "application/vnd.ms-excel",
-        ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        ".ppt": "application/vnd.ms-powerpoint",
-        ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        ".txt": "text/plain", ".md": "text/markdown",
-        ".json": "application/json", ".csv": "text/csv"
-    }
-    return mime_map.get(ext, "application/octet-stream")
-
-
 def validate_file(file_path: Path) -> tuple[bool, str]:
     """验证文件是否可上传
     
@@ -178,114 +151,36 @@ def validate_file(file_path: Path) -> tuple[bool, str]:
     return True, ""
 
 
-def get_presign_url(config: dict, filename: str, size: int, 
-                    content_type: str, group_id: str) -> tuple[str, str, str]:
-    """获取预签名上传 URL
-    
-    Returns:
-        (upload_url, object_path, access_url) 或 (None, None, error)
-    """
-    import requests
-    
-    hub_url = config.get("hub_url", "https://imclaw-server.app.mosi.cn")
-    token = config.get("token")
-    
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json"
-    }
-    
-    data = {
-        "filename": filename,
-        "size": size,
-        "content_type": content_type,
-        "purpose": "message",
-        "group_id": group_id
-    }
-    
-    try:
-        resp = requests.post(
-            f"{hub_url}/api/v1/uploads/presign",
-            headers=headers,
-            json=data,
-            timeout=10
-        )
-        
-        if resp.status_code != 200:
-            return None, None, f"获取上传 URL 失败: HTTP {resp.status_code}"
-        
-        result = resp.json()
-        return result["upload_url"], result["object_path"], result.get("access_url", "")
-    except Exception as e:
-        return None, None, f"请求失败: {e}"
-
-
-def upload_file_to_tos(upload_url: str, file_path: Path, content_type: str) -> tuple[bool, str]:
-    """上传文件到 TOS
-    
-    Returns:
-        (success, error_message)
-    """
-    import requests
-    
-    try:
-        with open(file_path, 'rb') as f:
-            file_data = f.read()
-        
-        resp = requests.put(
-            upload_url,
-            data=file_data,
-            headers={"Content-Type": content_type},
-            timeout=120
-        )
-        
-        if resp.status_code in (200, 201):
-            return True, ""
-        else:
-            return False, f"上传失败: HTTP {resp.status_code}"
-    except Exception as e:
-        return False, f"上传异常: {e}"
+def _make_client(config: dict):
+    """从 config dict 创建 IMClawClient（仅用于 REST API，不连接 WebSocket）"""
+    from imclaw_skill import IMClawClient
+    return IMClawClient(
+        hub_url=config.get("hub_url", "https://imclaw-server.app.mosi.cn"),
+        token=config.get("token"),
+    )
 
 
 def prepare_attachment(file_path: Path, config: dict, group_id: str) -> tuple[dict, str]:
     """准备附件信息（验证、上传、返回附件对象）
-    
+
     Returns:
         (attachment_dict, error_message)
     """
     is_valid, error = validate_file(file_path)
     if not is_valid:
         return None, error
-    
-    filename = file_path.name
+
     file_size = file_path.stat().st_size
-    mime_type = get_mime_type(file_path)
-    ext = file_path.suffix.lower()
-    category = get_file_category(ext)
-    
-    print(f"   📎 准备上传: {filename} ({file_size / 1024:.1f}KB, {category})")
-    
-    upload_url, object_path, error = get_presign_url(
-        config, filename, file_size, mime_type, group_id
-    )
-    if not upload_url:
-        return None, error
-    
-    success, error = upload_file_to_tos(upload_url, file_path, mime_type)
-    if not success:
-        return None, error
-    
-    print(f"   ✅ 上传成功: {object_path}")
-    
-    attachment = {
-        "type": category,
-        "object_path": object_path,
-        "filename": filename,
-        "size": file_size,
-        "mime_type": mime_type
-    }
-    
-    return attachment, ""
+    category = get_file_category(file_path.suffix.lower())
+    print(f"   📎 准备上传: {file_path.name} ({file_size / 1024:.1f}KB, {category})")
+
+    try:
+        client = _make_client(config)
+        attachment = client.upload_file(str(file_path), group_id)
+        print(f"   ✅ 上传成功: {attachment['object_path']}")
+        return attachment, ""
+    except Exception as e:
+        return None, f"上传失败: {e}"
 
 
 def get_session_file(group_id: str) -> Path:
@@ -457,46 +352,29 @@ def send_reply(group_id: str, content: str = None, reply_to_id: str = None,
         attachments: 附件列表，每个元素为 dict，包含 type/object_path/filename/size/mime_type
     
     Returns:
-        (success, response)
+        (success, response_or_result)
     """
-    import requests
-    
-    hub_url = config.get("hub_url", "https://imclaw-server.app.mosi.cn")
-    token = config.get("token")
-    
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json"
-    }
-    
-    data = {}
-    
-    if content:
-        data["content"] = content
-    
-    if reply_to_id:
-        data["reply_to_id"] = reply_to_id
-    
-    if attachments:
-        data["attachments"] = attachments
-        if len(attachments) == 1 and not content:
-            data["content_type"] = attachments[0]["type"]
-        elif content and attachments:
-            data["content_type"] = "mixed"
-        elif len(attachments) > 1:
-            data["content_type"] = attachments[0]["type"]
-    
-    if not data.get("content") and not data.get("attachments"):
+    if not content and not attachments:
         return False, type('Response', (), {'status_code': 400, 'text': 'content or attachments required'})()
-    
-    resp = requests.post(
-        f"{hub_url}/api/v1/groups/{group_id}/messages",
-        headers=headers,
-        json=data,
-        timeout=10
-    )
-    
-    return resp.status_code in (200, 201), resp
+
+    content_type = None
+    if attachments:
+        if content and attachments:
+            content_type = "mixed"
+        elif len(attachments) == 1:
+            content_type = attachments[0]["type"]
+        else:
+            content_type = attachments[0]["type"]
+
+    try:
+        client = _make_client(config)
+        result = client.send_message(
+            group_id, content or "", reply_to_id,
+            attachments=attachments, content_type=content_type,
+        )
+        return True, result
+    except Exception as e:
+        return False, type('Response', (), {'status_code': 500, 'text': str(e)})()
 
 
 def mark_processed(msg_file: Path, msg: dict):

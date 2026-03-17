@@ -6,12 +6,40 @@ IMClaw 底层客户端 — HTTP/WebSocket 通信
 """
 
 import json
+import mimetypes
 import threading
 import time
+from pathlib import Path
 from typing import Callable, Optional, Any
 
 import requests
 import websocket
+
+_FILE_TYPE_MAP = {
+    ".jpg": "image", ".jpeg": "image", ".png": "image",
+    ".gif": "image", ".webp": "image", ".svg": "image",
+    ".mp4": "video", ".webm": "video", ".mov": "video",
+    ".mp3": "audio", ".wav": "audio", ".ogg": "audio", ".m4a": "audio",
+}
+
+_MIME_FALLBACK = {
+    ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+    ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml",
+    ".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime",
+    ".mp3": "audio/mpeg", ".wav": "audio/wav", ".ogg": "audio/ogg", ".m4a": "audio/mp4",
+    ".pdf": "application/pdf", ".zip": "application/zip",
+    ".doc": "application/msword", ".txt": "text/plain", ".md": "text/markdown",
+    ".json": "application/json", ".csv": "text/csv",
+}
+
+
+def _guess_mime(path: Path) -> str:
+    mime, _ = mimetypes.guess_type(str(path))
+    return mime or _MIME_FALLBACK.get(path.suffix.lower(), "application/octet-stream")
+
+
+def _guess_file_type(ext: str) -> str:
+    return _FILE_TYPE_MAP.get(ext.lower(), "file")
 
 
 class IMClawClient:
@@ -193,6 +221,75 @@ class IMClawClient:
     def mark_read(self, group_id: str, message_id: str) -> dict:
         """标记群聊消息已读"""
         return self._post(f"/api/v1/groups/{group_id}/read", {"last_read_msg_id": message_id})
+
+    # ── 文件上传 ──
+
+    def presign(self, filename: str, size: int, purpose: str = "message",
+                group_id: str = None) -> dict:
+        """获取 TOS 预签名上传 URL
+
+        Args:
+            filename: 文件名
+            size: 文件大小（字节）
+            purpose: 用途，"message" 或 "avatar"
+            group_id: 群聊 ID（purpose 为 message 时需要）
+
+        Returns:
+            {"upload_url": str, "object_path": str, "access_url": str}
+        """
+        data = {"filename": filename, "size": size, "purpose": purpose}
+        if group_id:
+            data["group_id"] = group_id
+        return self._post("/api/v1/upload/presign", data)
+
+    def upload_file(self, file_path: str, group_id: str = None,
+                    purpose: str = "message") -> dict:
+        """上传文件到 TOS 并返回 attachment 对象
+
+        完整流程：presign → PUT 上传 → 返回可直接用于消息发送的 attachment dict。
+
+        Args:
+            file_path: 本地文件路径
+            group_id: 群聊 ID（purpose 为 message 时需要）
+            purpose: 用途，"message" 或 "avatar"
+
+        Returns:
+            attachment dict，可直接放入 send_message 的 attachments 列表:
+            {"type": "image"|"video"|"audio"|"file",
+             "object_path": "...", "filename": "...",
+             "size": 123, "mime_type": "..."}
+
+        Raises:
+            FileNotFoundError: 文件不存在
+            Exception: 上传失败
+        """
+        path = Path(file_path)
+        if not path.exists() or not path.is_file():
+            raise FileNotFoundError(f"文件不存在: {file_path}")
+
+        filename = path.name
+        file_size = path.stat().st_size
+        mime_type = _guess_mime(path)
+
+        result = self.presign(filename, file_size, purpose, group_id)
+        upload_url = result["upload_url"]
+        object_path = result["object_path"]
+
+        with open(path, "rb") as f:
+            resp = requests.put(
+                upload_url, data=f.read(),
+                headers={"Content-Type": mime_type}, timeout=120,
+            )
+        if resp.status_code not in (200, 201):
+            raise Exception(f"上传失败: HTTP {resp.status_code}")
+
+        return {
+            "type": _guess_file_type(path.suffix),
+            "object_path": object_path,
+            "filename": filename,
+            "size": file_size,
+            "mime_type": mime_type,
+        }
 
     # ── 联系能力（进入 owner 的 DM） ──
 

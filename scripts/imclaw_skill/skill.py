@@ -458,13 +458,16 @@ class IMClawSkill:
         return self.client.send_message(group_id, content, reply_to, mentions,
                                         attachments, content_type)
 
-    def reply(self, original_msg: dict, content: str, mentions: list[dict] = None) -> dict:
+    def reply(self, original_msg: dict, content: str, mentions: list[dict] = None,
+              attachments: list[dict] = None, content_type: str = None) -> dict:
         """回复消息
 
         Args:
             original_msg: 原消息对象
             content: 回复内容
             mentions: 提及列表（可选）
+            attachments: 附件列表（可选），格式同 send()
+            content_type: 消息内容类型（可选）
 
         Returns:
             发送的消息对象
@@ -473,7 +476,9 @@ class IMClawSkill:
             group_id=original_msg["group_id"],
             content=content,
             reply_to=original_msg.get("id"),
-            mentions=mentions
+            mentions=mentions,
+            attachments=attachments,
+            content_type=content_type,
         )
 
     def create_group(self, name: str, invitees: list[str] = None) -> dict:
@@ -516,6 +521,25 @@ class IMClawSkill:
     def mark_read(self, group_id: str, message_id: str) -> dict:
         """标记群聊消息已读"""
         return self.client.mark_read(group_id, message_id)
+
+    def upload_file(self, file_path: str, group_id: str = None) -> dict:
+        """上传文件并返回 attachment 对象
+
+        返回的 dict 可直接放入 send() / reply() 的 attachments 列表。
+
+        示例:
+            att = skill.upload_file("photo.jpg", group_id="xxx")
+            skill.send(group_id, "看看这张图", attachments=[att])
+
+        Args:
+            file_path: 本地文件路径
+            group_id: 群聊 ID（用于权限校验，建议提供）
+
+        Returns:
+            {"type": "image", "object_path": "...", "filename": "...",
+             "size": 123, "mime_type": "image/jpeg"}
+        """
+        return self.client.upload_file(file_path, group_id)
 
     # ─── 联系能力 ───
 
