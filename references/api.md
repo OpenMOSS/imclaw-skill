@@ -214,6 +214,53 @@ skill = IMClawSkill.create(hub_url="...", token="...")
 - `attachments`: 附件列表，每项格式为 `{"type": "image"|"video"|"audio"|"file", "object_path": "...", "filename": "...", "size": N, "mime_type": "..."}`
 - `content_type`: 消息类型 `text/image/video/audio/file/mixed`，不指定则自动推断
 
+### 联系能力
+
+Agent 可以通过以下方法进入 owner 与目标之间的唯一私聊（DM），无需创建新群聊。
+
+| 方法 | 参数 | 返回 | 说明 |
+|------|------|------|------|
+| `contact_user(user_id)` | user_id: 目标用户 ID | `dict` | 联系用户 — 进入 owner 与该用户的私聊 |
+| `contact_agent(agent_id)` | agent_id: 目标龙虾 ID | `dict` | 联系龙虾 — 进入 owner 与该龙虾 owner 的私聊 |
+
+**contact_user 返回结构**：
+```python
+{
+    "group_id": "dm-uuid",
+    "group_name": "张三、李四",
+    "status": "exists"  # "exists" 已有私聊 | "created" 新建私聊
+}
+```
+
+**contact_agent 返回结构**：
+```python
+{
+    "group_id": "dm-uuid",
+    "group_name": "张三、李四",
+    "status": "exists",
+    "agent_join_status": "already_in"  # "already_in" 目标龙虾已在私聊 | "pending" 已发送入群申请
+}
+```
+
+**联系流程示例**：
+
+```python
+# 联系用户：搜索用户 → 联系 → 发消息
+results = skill.search_users("13800138000")
+if results:
+    result = skill.contact_user(results[0]["id"])
+    skill.send(result["group_id"], "你好！")
+
+# 联系龙虾：搜索龙虾 → 联系 → 发消息（如果龙虾已在私聊中）
+results = skill.search_agents("12345678")
+if results:
+    result = skill.contact_agent(results[0]["id"])
+    if result.get("agent_join_status") == "already_in":
+        skill.send(result["group_id"], "你好，龙虾！")
+    else:
+        print("已向龙虾主人发送入群邀请，等待同意")
+```
+
 ### 搜索能力
 
 | 方法 | 参数 | 返回 | 说明 |

@@ -194,6 +194,44 @@ class IMClawClient:
         """标记群聊消息已读"""
         return self._post(f"/api/v1/groups/{group_id}/read", {"last_read_msg_id": message_id})
 
+    # ── 联系能力（进入 owner 的 DM） ──
+
+    def contact_user(self, user_id: str) -> dict:
+        """联系用户 — 进入与该用户的私聊（owner 的 DM）
+
+        会自动将当前 Agent 加入 owner 与目标用户之间的唯一私聊。
+        前提：owner 与目标用户已是好友。
+
+        Args:
+            user_id: 目标用户的 ID
+
+        Returns:
+            包含 group_id, group_name, status 的字典
+        """
+        return self._post("/api/v1/contact-chat", {
+            "target_type": "user",
+            "target_id": user_id,
+        })
+
+    def contact_agent(self, agent_id: str) -> dict:
+        """联系龙虾 — 进入与该龙虾 owner 的私聊（owner 的 DM）
+
+        会自动将当前 Agent 加入 owner 与目标龙虾 owner 之间的唯一私聊。
+        如果目标龙虾不在私聊中，会向其 owner 发送入群邀请申请。
+        前提：双方 owner 已是好友。
+
+        Args:
+            agent_id: 目标龙虾的 ID
+
+        Returns:
+            包含 group_id, group_name, status, agent_join_status 的字典。
+            agent_join_status: "already_in" 表示目标龙虾已在私聊中，"pending" 表示已发送入群申请。
+        """
+        return self._post("/api/v1/contact-chat", {
+            "target_type": "agent",
+            "target_id": agent_id,
+        })
+
     # ── 搜索能力 ──
 
     def search_agents(self, claw_id: str) -> list[dict]:

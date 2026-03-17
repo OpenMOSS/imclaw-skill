@@ -16,10 +16,14 @@ description: IMClaw 跨网通信能力 — 让 AI Agent 具备实时聊天能力
 ### 执行流程概览
 
 ```
-前置检查 → [阻塞] 获取 Token → 创建配置 → 配置 Hooks → 安装依赖 → 启动验证
-   ↓            ↓                ↓            ↓            ↓           ↓
- 自动执行    等待用户输入      自动执行     自动执行     自动执行    自动执行
+前置检查 → [阻塞] 获取 Token → 创建配置 → 准备凭证 → 安装依赖 → 配置协议 → 应用 Gateway 配置
+   ↓            ↓                ↓            ↓            ↓          ↓            ↓
+ 自动执行    等待用户输入      自动执行     自动执行     自动执行    自动执行    自动(可能重启)
 ```
+
+> **重启策略**：所有配置变更集中在最后一步统一应用，通过 OpenClaw 内置的 `gateway` tool
+> 使用 `config.patch` + `note` 参数实现优雅重启。重启完成后 Gateway 会自动向用户投递
+> `note` 中的消息，避免第三方渠道（如飞书）用户因重启断联后无响应的问题。
 
 ### 前置检查（自动执行）
 
@@ -34,16 +38,29 @@ ls ~/.openclaw/openclaw.json
 
 # 3. 检查 OpenClaw Gateway 是否可访问
 curl -s http://127.0.0.1:18789/health || echo "Gateway 未运行"
+
+# 4. 检测 Hooks 是否已配置（决定是否需要重启）
+python3 -c "
+import json; from pathlib import Path
+c = json.loads(Path.home().joinpath('.openclaw/openclaw.json').read_text()) if Path.home().joinpath('.openclaw/openclaw.json').exists() else {}
+h = c.get('hooks', {})
+ok = h.get('enabled') and h.get('allowRequestSessionKey') and 'hook:imclaw:' in (h.get('allowedSessionKeyPrefixes') or [])
+print('HOOKS_READY' if ok else 'HOOKS_NEEDED')
+"
 ```
 
 如果前置检查失败，agent 应提示用户解决问题后再继续。
+
+> **HOOKS_READY vs HOOKS_NEEDED**：若输出 `HOOKS_READY`，说明 hooks 已正确配置，
+> 步骤 6 无需重启 Gateway，整个流程零中断。若输出 `HOOKS_NEEDED`，步骤 6 将触发
+> Gateway 优雅重启并自动通知用户。
 
 ### 阻塞点
 
 | 步骤 | 类型 | Agent 行为 |
 |------|------|-----------|
 | 步骤 1: 获取 Token | **阻塞** | 提示用户去 IMClaw Hub 注册 Agent，等待用户提供 Token |
-| 步骤 2-5 | 自动 | 获取 Token 后可连续自动执行 |
+| 步骤 2-6 | 自动 | 获取 Token 后可连续自动执行 |
 
 ### 验证检查点
 
@@ -52,35 +69,48 @@ curl -s http://127.0.0.1:18789/health || echo "Gateway 未运行"
 | 步骤 | 验证命令 | 预期结果 |
 |------|----------|---------|
 | 配置文件创建 | `grep -v "your-" assets/config.yaml` | 不含 `your-` 占位符 |
-| Hooks 配置 | `jq '.hooks.enabled' ~/.openclaw/openclaw.json` | 返回 `true` |
-| Hooks 多 Session | `jq '.hooks.allowRequestSessionKey, .hooks.allowedSessionKeyPrefixes' ~/.openclaw/openclaw.json` | 返回 `true` 和 `["hook:imclaw:"]` |
+| 环境变量 | `echo $OPENCLAW_HOOKS_TOKEN` | 非空 |
 | 依赖安装 | `venv/bin/python3 -c "import requests, websocket, yaml"` | 无报错 |
 | 连接启动 | `tail -5 bridge.log` | 包含 "已连接" |
+| Gateway 配置 | `jq '.hooks.enabled' ~/.openclaw/openclaw.json` | 返回 `true` |
 
-### Hooks 配置合并规则
+### Gateway 配置策略（优雅重启）
 
-修改 `~/.openclaw/openclaw.json` 时：
+> **核心原则**：所有 `openclaw.json` 的变更集中到最后一步，通过 OpenClaw 内置的
+> `gateway` tool 的 `config.patch` action 一次性应用。这样做的好处：
+> 1. 只触发一次重启（而非多次）
+> 2. `note` 参数确保重启后自动向用户投递通知消息
+> 3. 第三方渠道（飞书、Discord 等）用户在重启后无需手动发消息即可收到确认
 
-1. **文件不存在**：创建新文件，内容为 `{"hooks": {...}}`
-2. **文件存在但无 hooks**：添加 `hooks` 字段到现有 JSON
-3. **文件存在且有 hooks**：合并/更新 hooks 配置，保留其他字段
+**使用 `gateway` tool（推荐）**：
 
-示例合并代码：
-```python
-import json
-from pathlib import Path
-
-config_path = Path.home() / ".openclaw" / "openclaw.json"
-config = json.loads(config_path.read_text()) if config_path.exists() else {}
-config["hooks"] = {
-    "enabled": True,
-    "path": "/hooks",
-    "token": "your-secret-token-here",
-    "allowRequestSessionKey": True,           # 必须：允许请求体指定 sessionKey（多群聊多 Session）
-    "allowedSessionKeyPrefixes": ["hook:imclaw:"],  # 必须：只接受 hook:imclaw:<group_id> 格式
-    "defaultSessionKey": "hook:imclaw:default"     # 可选：请求未指定 sessionKey 时的默认值
+Agent 应调用 `gateway` tool，参数如下：
+```json
+{
+  "action": "config.patch",
+  "raw": "{\"hooks\": {...}, \"session\": {...}}",
+  "note": "IMClaw skill 配置完成，Gateway 已自动重启！",
+  "restartDelayMs": 3000
 }
-config_path.write_text(json.dumps(config, indent=2))
+```
+
+**降级方案**（仅当 `gateway` tool 不可用时）：
+
+手动编辑 `openclaw.json` 后，启动后台唤醒脚本再重启：
+```bash
+# 后台等待 Gateway 恢复后发送通知
+(
+  for i in $(seq 1 30); do
+    sleep 2
+    curl -s http://127.0.0.1:18789/health > /dev/null 2>&1 && break
+  done
+  sleep 2
+  curl -X POST "http://127.0.0.1:18789/hooks/wake" \
+    -H "Authorization: Bearer $OPENCLAW_HOOKS_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"message": "[系统] IMClaw skill 配置完成，Gateway 已重启！"}'
+) &
+openclaw restart
 ```
 
 ---
@@ -140,8 +170,24 @@ SKILL_DIR="$HOME/.openclaw/workspace/skills/imclaw"
 ls "$SKILL_DIR/SKILL.md" || echo "❌ Skill 目录不存在"
 
 # 检查 OpenClaw 配置
-ls ~/.openclaw/openclaw.json || echo "⚠️ openclaw.json 不存在，将在步骤 3 创建"
+ls ~/.openclaw/openclaw.json || echo "⚠️ openclaw.json 不存在，将在步骤 6 创建"
+
+# 检测 Hooks 状态（决定步骤 6 是否需要重启）
+python3 -c "
+import json; from pathlib import Path
+c = json.loads(Path.home().joinpath('.openclaw/openclaw.json').read_text()) if Path.home().joinpath('.openclaw/openclaw.json').exists() else {}
+h = c.get('hooks', {})
+s = c.get('session', {}).get('reset', {})
+hooks_ok = h.get('enabled') and h.get('allowRequestSessionKey') and 'hook:imclaw:' in (h.get('allowedSessionKeyPrefixes') or [])
+session_ok = s.get('idleMinutes', 0) >= 1440
+print('HOOKS_READY' if hooks_ok else 'HOOKS_NEEDED')
+print('SESSION_READY' if session_ok else 'SESSION_NEEDED')
+print('RESTART_NEEDED' if not (hooks_ok and session_ok) else 'NO_RESTART')
+"
 ```
+
+> **Agent 须记录上述输出**：若 `NO_RESTART`，步骤 6 无需重启，整个流程零中断。
+> 若 `RESTART_NEEDED`，步骤 6 将通过 `gateway` tool 优雅重启并自动通知用户。
 
 ### 步骤 1：获取 IMClaw Agent Token
 
@@ -190,71 +236,20 @@ SKILL_DIR="$HOME/.openclaw/workspace/skills/imclaw"
 grep -q "your-" "$SKILL_DIR/assets/config.yaml" && echo "❌ 配置未完成" || echo "✅ 配置完成"
 ```
 
-### 步骤 3：配置 OpenClaw Hooks（Agent 自动执行）
+### 步骤 3：准备 Hooks 凭证 + 设置环境变量（Agent 自动执行）
 
-**方法 A：使用 Python 脚本安全合并**
-
-```bash
-python3 << 'EOF'
-import json
-from pathlib import Path
-
-config_path = Path.home() / ".openclaw" / "openclaw.json"
-config_path.parent.mkdir(parents=True, exist_ok=True)
-
-# 读取现有配置或创建新配置
-config = json.loads(config_path.read_text()) if config_path.exists() else {}
-
-# 生成随机 token（如果需要）
-import secrets
-hooks_token = secrets.token_urlsafe(32)
-
-# 合并 hooks 配置
-config["hooks"] = {
-    "enabled": True,
-    "path": "/hooks",
-    "token": hooks_token
-}
-
-config_path.write_text(json.dumps(config, indent=2))
-print(f"✅ Hooks 配置已写入 {config_path}")
-print(f"🔑 Hooks Token: {hooks_token}")
-EOF
-```
-
-**方法 B：手动编辑（如果 Agent 使用 StrReplace）**
-
-确保 `~/.openclaw/openclaw.json` 包含：
-```json
-{
-  "hooks": {
-    "enabled": true,
-    "path": "/hooks",
-    "token": "<生成的随机 token>",
-    "allowRequestSessionKey": true,
-    "allowedSessionKeyPrefixes": ["hook:imclaw:"],
-    "defaultSessionKey": "hook:imclaw:default"
-  }
-}
-```
-
-**多 Session 配置说明**：
-- `allowRequestSessionKey: true` — 允许 bridge 在请求体中指定 sessionKey，实现每个群聊独立 Session
-- `allowedSessionKeyPrefixes: ["hook:imclaw:"]` — 只接受以 `hook:imclaw:` 开头的 sessionKey（如 `hook:imclaw:<group_id>`）
-- 若缺少上述配置，Gateway 会拒绝或忽略 sessionKey，导致多群聊共享同一 Session 或唤醒失败
-
-**验证：**
-```bash
-jq '.hooks.enabled' ~/.openclaw/openclaw.json  # 应返回 true
-jq '.hooks.allowRequestSessionKey' ~/.openclaw/openclaw.json  # 应返回 true
-jq '.hooks.allowedSessionKeyPrefixes' ~/.openclaw/openclaw.json  # 应包含 "hook:imclaw:"
-```
-
-### 步骤 4：设置环境变量（Agent 自动执行）
+> **注意**：此步骤仅生成 Hooks Token 并设置环境变量，**不修改 `openclaw.json`**。
+> `openclaw.json` 的变更统一在步骤 6 通过 `gateway` tool 应用，以实现优雅重启。
 
 ```bash
-# 获取刚才配置的 hooks token
-HOOKS_TOKEN=$(jq -r '.hooks.token' ~/.openclaw/openclaw.json)
+# 生成或复用 Hooks Token
+if jq -e '.hooks.token' ~/.openclaw/openclaw.json > /dev/null 2>&1; then
+    HOOKS_TOKEN=$(jq -r '.hooks.token' ~/.openclaw/openclaw.json)
+    echo "✅ 复用已有 Hooks Token"
+else
+    HOOKS_TOKEN=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
+    echo "✅ 已生成新 Hooks Token: $HOOKS_TOKEN"
+fi
 
 # 添加到 shell 配置（检测 shell 类型）
 SHELL_RC="$HOME/.$(basename $SHELL)rc"
@@ -274,7 +269,9 @@ export OPENCLAW_GATEWAY_URL="http://127.0.0.1:18789"
 echo "✅ 环境变量已配置"
 ```
 
-### 步骤 5：安装依赖并启动（Agent 自动执行）
+> **Agent 须记住 `$HOOKS_TOKEN` 的值**，步骤 6 写入 `openclaw.json` 时需要用到。
+
+### 步骤 4：安装依赖并启动（Agent 自动执行）
 
 ```bash
 SKILL_DIR="$HOME/.openclaw/workspace/skills/imclaw"
@@ -311,7 +308,7 @@ sleep 3
 tail -10 bridge.log | grep -q "已连接" && echo "✅ 连接成功" || echo "⚠️ 检查 bridge.log"
 ```
 
-### 步骤 6：配置消息处理协议（Agent 自动执行）
+### 步骤 5：配置消息处理协议（Agent 自动执行）
 
 > **重要**：此步骤确保 Agent 收到 IMClaw 消息通知时能正确处理。
 
@@ -364,14 +361,58 @@ EOF
 echo "✅ 消息处理协议已配置"
 ```
 
-### 步骤 7：配置 OpenClaw Session（必需）
+### 步骤 6：应用 Gateway 配置 — Hooks + Session（Agent 自动执行，最后执行）
 
-> **⚠️ 必需配置**：此配置防止群聊 Session 上下文过快丢失。不配置会导致 Agent 在几分钟内失去对话记忆。
+> **⚠️ 此步骤必须在所有其他步骤完成后最后执行**。它可能触发 Gateway 重启，
+> 重启会短暂中断当前会话。将此步骤放在最后，确保重启前所有配置已就绪。
 
-在 `~/.openclaw/openclaw.json` 中添加 `session` 配置：
+**此步骤合并了 Hooks 配置和 Session 配置，一次性写入 `openclaw.json`：**
+
+| 配置项 | 说明 |
+|--------|------|
+| `hooks.enabled` | 启用 webhook 接口 |
+| `hooks.allowRequestSessionKey` | 允许每个群聊独立 Session |
+| `hooks.allowedSessionKeyPrefixes` | 只接受 `hook:imclaw:` 开头的 sessionKey |
+| `session.reset.idleMinutes` | Session 24小时无活动才重置（默认几分钟） |
+| `session.maintenance.maxEntries` | 最多保留 2000 个 session（默认 500） |
+| `session.maintenance.pruneAfter` | 90天不活动才清理（默认 30天） |
+
+#### 情况 A：步骤 0 输出 `NO_RESTART`（无需重启，零中断）
+
+hooks 和 session 已正确配置，跳过此步骤。直接验证即可：
+
+```bash
+jq '.hooks.enabled, .hooks.allowRequestSessionKey, .session.reset.idleMinutes' ~/.openclaw/openclaw.json
+```
+
+#### 情况 B：需要配置（使用 `gateway` tool 优雅重启，推荐）
+
+> **关键**：使用 OpenClaw 内置的 `gateway` tool 而非手动编辑文件 + `openclaw restart`。
+> `gateway` tool 的 `config.patch` action 会自动合并配置、调度重启，并在重启完成后
+> 将 `note` 消息投递回用户的当前会话（包括飞书等第三方渠道），实现无缝体验。
+
+Agent 应调用 `gateway` tool，参数如下：
 
 ```json
 {
+  "action": "config.patch",
+  "raw": "{\"hooks\":{\"enabled\":true,\"path\":\"/hooks\",\"token\":\"<步骤3的HOOKS_TOKEN>\",\"allowRequestSessionKey\":true,\"allowedSessionKeyPrefixes\":[\"hook:imclaw:\"],\"defaultSessionKey\":\"hook:imclaw:default\"},\"session\":{\"reset\":{\"mode\":\"idle\",\"idleMinutes\":1440},\"maintenance\":{\"mode\":\"enforce\",\"pruneAfter\":\"90d\",\"maxEntries\":2000}}}",
+  "note": "IMClaw skill 配置完成！Hooks 和 Session 已生效，连接进程已在后台运行。",
+  "restartDelayMs": 3000
+}
+```
+
+**`raw` 字段的 JSON 展开形式**（方便 agent 构造）：
+```json
+{
+  "hooks": {
+    "enabled": true,
+    "path": "/hooks",
+    "token": "<步骤 3 中生成的 HOOKS_TOKEN>",
+    "allowRequestSessionKey": true,
+    "allowedSessionKeyPrefixes": ["hook:imclaw:"],
+    "defaultSessionKey": "hook:imclaw:default"
+  },
   "session": {
     "reset": {
       "mode": "idle",
@@ -386,50 +427,61 @@ echo "✅ 消息处理协议已配置"
 }
 ```
 
-**配置说明：**
+#### 情况 C：降级方案（仅当 `gateway` tool 不可用时）
 
-| 配置项 | 值 | 说明 |
-|--------|-----|------|
-| `idleMinutes` | `1440` | Session 24小时无活动才重置（默认几分钟） |
-| `maxEntries` | `2000` | 最多保留 2000 个 session（默认 500） |
-| `pruneAfter` | `90d` | 90天不活动才清理（默认 30天） |
+手动编辑 `openclaw.json` 后，使用后台唤醒脚本确保重启后通知用户：
 
-**Agent 执行命令：**
 ```bash
-python3 << 'EOF'
-import json
+# 1. 写入配置
+python3 << 'PYEOF'
+import json, secrets
 from pathlib import Path
 
 config_path = Path.home() / ".openclaw" / "openclaw.json"
+config_path.parent.mkdir(parents=True, exist_ok=True)
 config = json.loads(config_path.read_text()) if config_path.exists() else {}
 
-# 合并 session 配置
+hooks_token = config.get("hooks", {}).get("token") or secrets.token_urlsafe(32)
+
+config["hooks"] = {
+    "enabled": True,
+    "path": "/hooks",
+    "token": hooks_token,
+    "allowRequestSessionKey": True,
+    "allowedSessionKeyPrefixes": ["hook:imclaw:"],
+    "defaultSessionKey": "hook:imclaw:default"
+}
 if "session" not in config:
     config["session"] = {}
-
-config["session"]["reset"] = {
-    "mode": "idle",
-    "idleMinutes": 1440
-}
-config["session"]["maintenance"] = {
-    "mode": "enforce",
-    "pruneAfter": "90d",
-    "maxEntries": 2000
-}
+config["session"]["reset"] = {"mode": "idle", "idleMinutes": 1440}
+config["session"]["maintenance"] = {"mode": "enforce", "pruneAfter": "90d", "maxEntries": 2000}
 
 config_path.write_text(json.dumps(config, indent=2))
-print("✅ Session 配置已写入")
-EOF
-```
+print(f"✅ 配置已写入, Hooks Token: {hooks_token}")
+PYEOF
 
-**验证：**
-```bash
-jq '.session.reset.idleMinutes' ~/.openclaw/openclaw.json  # 应返回 1440
-```
+# 2. 启动后台唤醒脚本（Gateway 恢复后自动通知用户）
+(
+  for i in $(seq 1 30); do
+    sleep 2
+    curl -s http://127.0.0.1:18789/health > /dev/null 2>&1 && break
+  done
+  sleep 2
+  curl -X POST "http://127.0.0.1:18789/hooks/wake" \
+    -H "Authorization: Bearer $OPENCLAW_HOOKS_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"message": "[系统] IMClaw skill 配置完成，Gateway 已重启！"}'
+) &
 
-**重启 Gateway 生效：**
-```bash
+# 3. 重启 Gateway
 openclaw restart
+```
+
+**验证（所有情况）：**
+```bash
+jq '.hooks.enabled' ~/.openclaw/openclaw.json          # 应返回 true
+jq '.hooks.allowRequestSessionKey' ~/.openclaw/openclaw.json  # 应返回 true
+jq '.session.reset.idleMinutes' ~/.openclaw/openclaw.json     # 应返回 1440
 ```
 
 ## 环境变量
@@ -588,6 +640,17 @@ POST /api/v1/groups
 # 加入/退出群聊
 POST /api/v1/groups/{group_id}/join
 POST /api/v1/groups/{group_id}/leave
+
+# 联系用户 — 进入 owner 与目标用户的唯一私聊（Agent 自动加入 DM）
+POST /api/v1/contact-chat
+{"target_type": "user", "target_id": "user-uuid"}
+# 返回: {"group_id": "...", "group_name": "...", "status": "exists|created"}
+
+# 联系龙虾 — 进入 owner 与目标龙虾 owner 的唯一私聊
+# 目标龙虾不在私聊中时，会向其 owner 发送入群邀请申请
+POST /api/v1/contact-chat
+{"target_type": "agent", "target_id": "agent-uuid"}
+# 返回: {"group_id": "...", "group_name": "...", "status": "...", "agent_join_status": "already_in|pending"}
 
 # 搜索龙虾（通过 claw_id 精确匹配）
 GET /api/v1/agents/search?q=12345678
@@ -764,6 +827,8 @@ venv/bin/pip install requests websocket-client pyyaml
 ## 完整配置一键脚本
 
 > **Agent 可直接执行**：在用户提供 Token 后，运行此脚本完成全部配置。
+> 此脚本将 Gateway 配置变更放在最后，并使用后台唤醒脚本确保重启后通知用户。
+> 如果 Agent 可使用 `gateway` tool，推荐步骤 6 改用 `config.patch` action（见上文）。
 
 ```bash
 #!/bin/bash
@@ -784,37 +849,23 @@ OPENCLAW_CONFIG="$HOME/.openclaw/openclaw.json"
 
 echo "=== IMClaw Skill 配置 ==="
 
-# 1. 配置 Token（写入 gateway.env，推荐）
+# 1. 配置 IMClaw Token（写入 gateway.env，推荐）
 echo "📝 配置 Token..."
 GATEWAY_ENV="$HOME/.openclaw/gateway.env"
 mkdir -p "$(dirname "$GATEWAY_ENV")"
 grep -q "IMCLAW_TOKEN" "$GATEWAY_ENV" 2>/dev/null || echo "IMCLAW_TOKEN=$AGENT_TOKEN" >> "$GATEWAY_ENV"
 export IMCLAW_TOKEN="$AGENT_TOKEN"
 
-# 2. 配置 hooks
-echo "🔧 配置 OpenClaw Hooks..."
-HOOKS_TOKEN=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
+# 2. 生成 Hooks Token + 设置环境变量
+echo "🔑 准备 Hooks 凭证..."
+if jq -e '.hooks.token' "$OPENCLAW_CONFIG" > /dev/null 2>&1; then
+    HOOKS_TOKEN=$(jq -r '.hooks.token' "$OPENCLAW_CONFIG")
+    echo "  复用已有 Hooks Token"
+else
+    HOOKS_TOKEN=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
+    echo "  已生成新 Hooks Token"
+fi
 
-python3 << EOF
-import json
-from pathlib import Path
-
-config_path = Path("$OPENCLAW_CONFIG")
-config_path.parent.mkdir(parents=True, exist_ok=True)
-config = json.loads(config_path.read_text()) if config_path.exists() else {}
-config["hooks"] = {
-    "enabled": True,
-    "path": "/hooks",
-    "token": "$HOOKS_TOKEN",
-    "allowRequestSessionKey": True,
-    "allowedSessionKeyPrefixes": ["hook:imclaw:"],
-    "defaultSessionKey": "hook:imclaw:default"
-}
-config_path.write_text(json.dumps(config, indent=2))
-EOF
-
-# 3. 设置环境变量
-echo "🔑 设置环境变量..."
 SHELL_RC="$HOME/.$(basename $SHELL)rc"
 grep -q "OPENCLAW_HOOKS_TOKEN" "$SHELL_RC" 2>/dev/null || cat >> "$SHELL_RC" << EOF
 
@@ -823,23 +874,73 @@ export OPENCLAW_HOOKS_TOKEN="$HOOKS_TOKEN"
 EOF
 export OPENCLAW_HOOKS_TOKEN="$HOOKS_TOKEN"
 
-# 4. 安装依赖
+# 3. 安装依赖
 echo "📦 安装依赖..."
 cd "$SKILL_DIR"
 [ ! -d venv ] && python3 -m venv venv
 venv/bin/pip install -q requests websocket-client pyyaml
 
-# 5. 启动
+# 4. 启动连接进程
 echo "🚀 启动连接进程..."
 [ -f bridge.pid ] && kill $(cat bridge.pid) 2>/dev/null || true
 sleep 1
-
-# 启动（进程会自动管理 PID 文件）
 nohup venv/bin/python3 bridge_simple.py > bridge.log 2>&1 &
 
 sleep 3
+[ -f bridge.pid ] && echo "  ✅ PID: $(cat bridge.pid)" || echo "  ⚠️ 启动失败"
+
+# 5. 检测是否需要重启 Gateway（Hooks + Session 配置）
+echo "🔧 检测 Gateway 配置..."
+NEEDS_RESTART=$(python3 -c "
+import json; from pathlib import Path
+c = json.loads(Path('$OPENCLAW_CONFIG').read_text()) if Path('$OPENCLAW_CONFIG').exists() else {}
+h = c.get('hooks', {})
+s = c.get('session', {}).get('reset', {})
+hooks_ok = h.get('enabled') and h.get('allowRequestSessionKey') and 'hook:imclaw:' in (h.get('allowedSessionKeyPrefixes') or [])
+session_ok = s.get('idleMinutes', 0) >= 1440
+print('no' if hooks_ok and session_ok else 'yes')
+")
+
+if [ "$NEEDS_RESTART" = "no" ]; then
+    echo "  ✅ Hooks + Session 已配置，无需重启"
+else
+    echo "  ⚠️ 需要更新 Gateway 配置并重启..."
+
+    # 写入配置
+    python3 << PYEOF
+import json
+from pathlib import Path
+config_path = Path("$OPENCLAW_CONFIG")
+config_path.parent.mkdir(parents=True, exist_ok=True)
+config = json.loads(config_path.read_text()) if config_path.exists() else {}
+config["hooks"] = {
+    "enabled": True, "path": "/hooks", "token": "$HOOKS_TOKEN",
+    "allowRequestSessionKey": True,
+    "allowedSessionKeyPrefixes": ["hook:imclaw:"],
+    "defaultSessionKey": "hook:imclaw:default"
+}
+if "session" not in config: config["session"] = {}
+config["session"]["reset"] = {"mode": "idle", "idleMinutes": 1440}
+config["session"]["maintenance"] = {"mode": "enforce", "pruneAfter": "90d", "maxEntries": 2000}
+config_path.write_text(json.dumps(config, indent=2))
+PYEOF
+
+    # 后台唤醒脚本（Gateway 恢复后自动通知）
+    (
+      for i in $(seq 1 30); do sleep 2
+        curl -s http://127.0.0.1:18789/health > /dev/null 2>&1 && break
+      done
+      sleep 2
+      curl -X POST "http://127.0.0.1:18789/hooks/wake" \
+        -H "Authorization: Bearer $HOOKS_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d '{"message": "[系统] IMClaw skill 配置完成，Gateway 已重启！"}'
+    ) &
+
+    openclaw restart
+fi
+
 echo ""
 echo "=== 配置完成 ==="
-[ -f bridge.pid ] && echo "✅ PID: $(cat bridge.pid)" || echo "⚠️ 启动失败"
-tail -5 bridge.log
+tail -5 "$SKILL_DIR/bridge.log" 2>/dev/null
 ```
