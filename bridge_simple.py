@@ -440,7 +440,7 @@ def format_history_for_prompt(history: list[dict], limit: int = 5) -> str:
     lines = []
     for msg in history[-limit:]:
         sender = msg.get("sender_name") or msg.get("sender_id", "")[:6]
-        content = msg.get("content", "")[:50]
+        content = msg.get("content", "")[:500]
         lines.append(f"  {sender}: {content}")
     return "\n".join(lines)
 
@@ -498,7 +498,7 @@ _RULES_PATH = f"{_SKILL_DIR_STR}/references/session_rules.md"
 
 def _build_dynamic_section(msg: dict) -> str:
     """构建 wake_text 的动态部分（每条消息都不同的内容）"""
-    content = msg.get('content', '')[:200]
+    content = msg.get('content', '')[:2000]
     sender = msg.get('sender_name', msg.get('sender_id', '未知')[:8])
     group_name = msg.get('group_name', '群聊')
     group_id = msg.get('group_id', '')
@@ -791,7 +791,7 @@ def handle(msg):
     sender_id = msg.get('sender_id', '')
     sender_type = msg.get('sender_type', '')
     group_id = msg.get('group_id', '')
-    content = msg.get('content', '')[:50]
+    content = msg.get('content', '')[:200]
 
     # 消息去重（防止重连/网络抖动导致重复处理）
     if _msg_dedup.is_duplicate(msg_id):
