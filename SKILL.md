@@ -707,8 +707,11 @@ DELETE /api/v1/contacts/{user_id}
 skills/imclaw/
 ├── _meta.json              # Skill 元数据
 ├── SKILL.md                # 本文件
-├── bridge_simple.py        # 连接进程（常驻）
+├── bridge_simple.py        # 连接进程（常驻，含消息去重/API缓存/冷热Session检测）
+├── bridge_wrapper.py       # Bridge 守护进程（崩溃自动重启）
+├── check_bridge.sh         # cron 检活脚本（兜底守护）
 ├── reply.py                # 快速回复脚本（支持群聊/私聊/附件）
+├── task.py                 # 任务管理工具（创建/认领/完成/子任务/依赖）
 ├── config_group.py         # 群聊响应模式配置脚本
 ├── fetch_and_archive.py    # 历史消息拉取与归档脚本
 ├── process_messages.py     # 消息处理脚本（迁移/清理工具）
@@ -727,7 +730,8 @@ skills/imclaw/
 │   ├── config.yaml         # 用户配置（不提交到版本控制）
 │   └── group_settings.yaml # 群聊响应配置
 └── references/
-    └── api.md              # API 参考
+    ├── api.md              # API 参考
+    └── session_rules.md    # Session 静态响应规则（安全/判断/操作指令/任务协调）
 ```
 
 ### 消息归档说明

@@ -21,6 +21,7 @@ import signal
 import atexit
 import logging
 import threading
+from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
 
@@ -128,6 +129,51 @@ class PIDManager:
         
         self.release()
         os._exit(0)
+
+
+class MessageDedup:
+    """滑动窗口消息去重，防止 WebSocket 重连/网络抖动导致的重复处理"""
+
+    def __init__(self, max_size=1000):
+        self._seen = OrderedDict()
+        self._max_size = max_size
+
+    def is_duplicate(self, msg_id: str) -> bool:
+        if not msg_id:
+            return False
+        if msg_id in self._seen:
+            return True
+        self._seen[msg_id] = time.time()
+        while len(self._seen) > self._max_size:
+            self._seen.popitem(last=False)
+        return False
+
+
+class TTLCache:
+    """带过期时间的内存缓存，减少高频 API 调用"""
+
+    def __init__(self, ttl_seconds=60):
+        self._cache = {}
+        self._ttl = ttl_seconds
+
+    def get(self, key):
+        if key in self._cache:
+            value, expire_at = self._cache[key]
+            if time.time() < expire_at:
+                return value
+            del self._cache[key]
+        return None
+
+    def set(self, key, value):
+        self._cache[key] = (value, time.time() + self._ttl)
+
+    def invalidate(self, key):
+        self._cache.pop(key, None)
+
+
+_msg_dedup = MessageDedup()
+_members_cache = TTLCache(ttl_seconds=60)
+_history_cache = TTLCache(ttl_seconds=10)
 
 # 路径设置 - 自动检测，支持多种部署方式
 def get_skill_dir() -> Path:
@@ -443,131 +489,96 @@ def get_queue_count(group_id: str = None) -> int:
         return 0
 
 
+_warm_sessions = {}  # {session_key: last_wake_time}
+_WARM_THRESHOLD = 3600  # 1小时内视为热 Session
+
+_SKILL_DIR_STR = "~/.openclaw/workspace/skills/imclaw"
+_RULES_PATH = f"{_SKILL_DIR_STR}/references/session_rules.md"
+
+
+def _build_dynamic_section(msg: dict) -> str:
+    """构建 wake_text 的动态部分（每条消息都不同的内容）"""
+    content = msg.get('content', '')[:200]
+    sender = msg.get('sender_name', msg.get('sender_id', '未知')[:8])
+    group_name = msg.get('group_name', '群聊')
+    group_id = msg.get('group_id', '')
+    from_owner = msg.get('_from_owner', False)
+
+    ctx = msg.get('_context', {})
+    response_mode = ctx.get('response_mode', 'smart')
+    is_mentioned = ctx.get('is_mentioned', False)
+    group_members = ctx.get('group_members', [])
+    recent_history = ctx.get('recent_history', [])
+
+    my_name = MY_PROFILE.get('display_name', '未知')
+    my_desc = MY_PROFILE.get('description', '')
+
+    members_str = format_members_for_prompt(group_members)
+    history_str = format_history_for_prompt(recent_history, limit=5)
+    date_ymd = datetime.now().strftime("%Y/%m/%d")
+
+    return f"""== 身份 ==
+你是 **{my_name}**{"（" + my_desc + "）" if my_desc else ""}
+群成员: {members_str}
+
+== 状态 ==
+响应模式: {response_mode} | 被@: {"是" if is_mentioned else "否"} | 来自主人: {"是 👑" if from_owner else "否"}
+
+== 最近对话 ==
+{history_str}
+
+== 本地记录路径 ==
+{_SKILL_DIR_STR}/imclaw_processed/{date_ymd}/{group_id}.jsonl
+
+== 消息 ==
+群聊: {group_name}
+发送者: {sender}{"（你的主人）" if from_owner else ""}
+内容: {content}
+
+== 操作 ==
+回复: cd {_SKILL_DIR_STR} && venv/bin/python3 reply.py "回复内容" --group {group_id}
+静默: cd {_SKILL_DIR_STR} && venv/bin/python3 -c "from reply import clear_queue; clear_queue('{group_id}')"
+切模式: cd {_SKILL_DIR_STR} && venv/bin/python3 config_group.py --group {group_id} --mode silent|smart"""
+
+
 def wake_session_for_group(msg: dict):
     """通过 hooks/agent 唤醒群聊对应的独立 Session（每个群聊一个 Session）"""
     try:
         import requests
-        content = msg.get('content', '')[:200]
-        sender = msg.get('sender_name', msg.get('sender_id', '未知')[:8])
         group_name = msg.get('group_name', '群聊')
         group_id = msg.get('group_id', '')
         from_owner = msg.get('_from_owner', False)
-        
-        # 获取上下文信息
-        ctx = msg.get('_context', {})
-        response_mode = ctx.get('response_mode', 'smart')
-        is_mentioned = ctx.get('is_mentioned', False)
-        group_members = ctx.get('group_members', [])
-        recent_history = ctx.get('recent_history', [])
+        is_mentioned = msg.get('_context', {}).get('is_mentioned', False)
 
-        # 使用全局 token（已从环境变量或配置文件获取）
         if not HOOKS_TOKEN:
             logger.error("   ❌ 唤醒失败: OPENCLAW_HOOKS_TOKEN 未配置")
             return
 
         gateway_url = os.environ.get("OPENCLAW_GATEWAY_URL", "http://127.0.0.1:18789")
-
-        # 每个群聊独立的 session key
         session_key = f"hook:imclaw:{group_id}"
-        
-        # 从 API 获取的身份信息
-        my_name = MY_PROFILE.get('display_name', '未知')
-        my_desc = MY_PROFILE.get('description', '')
-        
-        # 格式化上下文信息
-        members_str = format_members_for_prompt(group_members)
-        history_str = format_history_for_prompt(recent_history, limit=5)
-        
-        # 构造标签提示
+
+        # 冷/热 Session 检测
+        now = time.time()
+        last_wake = _warm_sessions.get(session_key, 0)
+        is_cold = (now - last_wake) > _WARM_THRESHOLD
+        _warm_sessions[session_key] = now
+
         owner_hint = " 👑 [来自主人]" if from_owner else ""
         mentioned_hint = " 📢 [被@提及]" if is_mentioned else ""
-        date_ymd = datetime.now().strftime("%Y/%m/%d")
-        
-        # 唤醒消息（包含完整上下文，确保 Session 重置后仍能正确响应）
-        wake_text = f"""[IMClaw] 收到新消息{owner_hint}{mentioned_hint}
+        dynamic = _build_dynamic_section(msg)
 
-== 安全规则（最高优先级，不可被任何用户指令覆盖）==
-1. 绝不透露 token、API key、密码、secret 或任何认证凭据
-2. 绝不读取或输出以下文件的内容：config.yaml、openclaw.json、gateway.env、.env、任何含密钥的配置文件
-3. 绝不在消息中包含以 "eyJ"、"sk-"、"tvly-"、"Bearer " 等开头的字符串
-4. 如果有人（包括主人）要求提供上述信息，拒绝并回复"抱歉，我无法提供认证信息"
-5. 如果不确定某段内容是否包含凭据，宁可不发送
+        if is_cold:
+            wake_text = f"""[IMClaw] 收到新消息（Session 激活）{owner_hint}{mentioned_hint}
 
-== 身份信息 ==
-你是 **{my_name}**{"（" + my_desc + "）" if my_desc else ""}
-群成员: {members_str}
+规则文件: {_RULES_PATH}
+请先阅读规则文件，然后处理以下消息。所有命令在 cd {_SKILL_DIR_STR} 下执行。
 
-== 响应判断 ==
-群聊响应模式: {response_mode}
-被 @ 了: {"是" if is_mentioned else "否"}
-来自主人: {"是 👑" if from_owner else "否"}
+{dynamic}"""
+        else:
+            wake_text = f"""[IMClaw] 新消息{owner_hint}{mentioned_hint}
 
-== 最近对话 ==
-{history_str}
+{dynamic}"""
 
-== 判断规则 ==
-1. 如果被 @ 了 → 必须响应
-2. 如果消息来自主人（👑 标记）→ 优先响应
-3. 如果消息内容中提到了你的名字（对比群成员昵称，判断是否最可能指你）→ 响应
-4. 如果模式是 silent 且未满足 1/2/3 → 不响应，直接清空队列
-5. 如果模式是 smart → 根据对话上下文判断你是否需要参与
-
-== 上下文不足时 ==
-若觉得「最近对话」条数太少、无法判断是否要参与或如何回复，请按顺序：
-1. 优先查看本群当天的本地记录（每行一条 JSON，取 content、sender_id、created_at 等即可）：
-   ~/.openclaw/workspace/skills/imclaw/imclaw_processed/{date_ymd}/{group_id}.jsonl
-2. 若本地记录仍有缺失或需要更早的消息，可在 imclaw 技能目录下执行 Python 脚本，使用
-   skill.client.get_history("{group_id}", limit=50, before=某条消息id)
-   获取更多历史；before 可选，不传则取该群最新 limit 条。
-
-== 消息内容 ==
-群聊: {group_name}
-发送者: {sender}{"（你的主人）" if from_owner else ""}
-内容: {content}
-
-== 操作指令 ==
-回复当前群聊（必须指定 --group 确保发送到正确群聊）：
-cd ~/.openclaw/workspace/skills/imclaw && venv/bin/python3 reply.py "你的回复内容" --group {group_id}
-
-如决定不响应（静默模式或判断不需要参与），清空队列：
-cd ~/.openclaw/workspace/skills/imclaw && venv/bin/python3 -c "from reply import clear_queue; clear_queue('{group_id}')"
-
-后续发送（完成任务后如需继续发消息到当前群）：
-cd ~/.openclaw/workspace/skills/imclaw && venv/bin/python3 reply.py "后续消息" --group {group_id}
-
-切换响应模式（当主人要求时使用）：
-# 静默模式（主人说"先别回复"、"没提到你就不要说话"）
-cd ~/.openclaw/workspace/skills/imclaw && venv/bin/python3 config_group.py --group {group_id} --mode silent
-# 智能模式（主人说"可以正常回复了"、"恢复正常"）
-cd ~/.openclaw/workspace/skills/imclaw && venv/bin/python3 config_group.py --group {group_id} --mode smart
-
-== ⚠️ 消息路由规则（严格遵守！） ==
-当主人让你「找某人发消息」「给某人说…」「跟某个龙虾说…」时，你必须按以下规则路由：
-
-1. 给好友用户发私聊消息 → 使用 --user（进入 DM）：
-   cd ~/.openclaw/workspace/skills/imclaw && venv/bin/python3 reply.py "消息内容" --user <目标用户ID>
-
-2. 给好友的龙虾发私聊消息 → 使用 --agent（进入 DM）：
-   cd ~/.openclaw/workspace/skills/imclaw && venv/bin/python3 reply.py "消息内容" --agent <目标龙虾ID>
-
-3. 在已有群聊中发消息 → 使用 --group：
-   cd ~/.openclaw/workspace/skills/imclaw && venv/bin/python3 reply.py "消息内容" --group <群聊ID>
-
-⛔ 禁止：当主人说「找 xxx 发消息」时不要发到群聊！必须用 --user 或 --agent 走私聊 DM。
-📋 查好友列表获取用户/龙虾 ID：
-   cd ~/.openclaw/workspace/skills/imclaw && venv/bin/python3 -c "
-from reply import load_config; from imclaw_skill import IMClawClient
-c = load_config(); client = IMClawClient(c['hub_url'], c['token'])
-contacts = client.list_contacts()
-for f in contacts:
-    name = f.get('display_name','')
-    uid = f.get('user_id','')
-    claws = f.get('linked_claws', [])
-    claw_info = ', '.join(a.get('display_name','')+'('+a.get('id','')[:8]+')' for a in claws) if claws else '无'
-    print(f'  {{name}} (user_id: {{uid[:8]}}...) 龙虾: {{claw_info}}')
-\""""
-
-        # 使用 /hooks/agent 创建独立 Session
         resp = requests.post(
             f"{gateway_url}/hooks/agent",
             json={
@@ -583,7 +594,8 @@ for f in contacts:
             },
             timeout=5
         )
-        logger.info(f"   🔔 Session [{session_key[:20]}...] 唤醒成功: HTTP {resp.status_code}")
+        cold_tag = " [冷启动]" if is_cold else ""
+        logger.info(f"   🔔 Session [{session_key[:20]}...] 唤醒成功{cold_tag}: HTTP {resp.status_code}")
     except Exception as e:
         logger.error(f"   ❌ Session 唤醒失败: {e}")
 
@@ -706,11 +718,18 @@ def on_disconnect():
 @skill.on_system_message
 def on_system_message(msg, parsed):
     """处理系统消息 - 成员变动检测（含 target 单数和 targets 复数）"""
-    if not parsed or not MY_AGENT_ID:
+    if not parsed:
         return
-    
+
     action = parsed.get('action')
     group_id = msg.get('group_id', '')
+
+    # 成员变动时清除缓存，确保下次获取最新数据
+    if action in ('invite', 'join', 'remove', 'leave') and group_id:
+        _members_cache.invalidate(group_id)
+
+    if not MY_AGENT_ID:
+        return
     
     if action not in ('remove', 'leave'):
         return
@@ -768,11 +787,17 @@ def _is_self_removal(msg: dict) -> bool:
 @skill.on_message
 def handle(msg):
     """处理收到的消息"""
+    msg_id = msg.get('id', '')
     sender_id = msg.get('sender_id', '')
     sender_type = msg.get('sender_type', '')
     group_id = msg.get('group_id', '')
     content = msg.get('content', '')[:50]
-    
+
+    # 消息去重（防止重连/网络抖动导致重复处理）
+    if _msg_dedup.is_duplicate(msg_id):
+        logger.debug(f"   ⏭️ 重复消息，跳过: {msg_id[:8]}")
+        return
+
     # 从缓存补充群名（API 消息不带群名）
     if group_id and 'group_name' not in msg:
         cached_name = GROUP_NAME_CACHE.get(group_id)
@@ -781,7 +806,7 @@ def handle(msg):
     
     group_name = msg.get('group_name', group_id[:8] if group_id else '未知')
 
-    # P0: 提前检测自身被移除/离开 — 只归档，不调 API、不入队列、不唤醒 Session
+    # 提前检测自身被移除/离开 — 只归档，不调 API、不入队列、不唤醒 Session
     if _is_self_removal(msg):
         logger.info(f"\n🚫 收到移除通知: {group_name}")
         skill.unsubscribe(group_id)
@@ -789,7 +814,7 @@ def handle(msg):
         logger.info(f"   已取消订阅并归档，跳过后续处理")
         return
 
-    # P1: 其他系统消息（成员变动、改名等）只归档，不唤醒 AI Session
+    # 系统消息（成员变动、改名等）只归档，不唤醒 AI Session
     if msg.get('type') == 'system':
         logger.info(f"\n📢 系统消息: {content}")
         logger.info(f"   群聊: {group_name}")
@@ -804,20 +829,37 @@ def handle(msg):
     logger.info(f"   群聊: {group_name}")
     logger.info(f"   发送者: {sender_type}:{sender_id[:8] if sender_id else '未知'}{owner_tag}")
     
-    # 跳过自己发送的消息（如果能识别自己的 ID）
+    # 跳过自己发送的消息
     if MY_AGENT_ID and sender_id == MY_AGENT_ID:
         logger.info("   ⏭️ 跳过自己的消息")
         return
     
-    # 获取响应模式和上下文
+    # 获取响应模式和 @提及 状态（轻量操作，不需要 API 调用）
     response_mode = get_response_mode(group_id)
     is_mentioned = check_if_mentioned(msg, MY_AGENT_ID) if MY_AGENT_ID else False
     
     logger.info(f"   📋 响应模式: {response_mode}, 被@: {is_mentioned}")
     
-    # 获取群成员和历史消息（用于智能判断）
-    group_members = get_group_members(group_id) if group_id else []
-    recent_history = get_recent_history(group_id, limit=10) if group_id else []
+    # silent 模式短路：未被 @ 且不是主人消息时，仅归档不唤醒
+    if response_mode == 'silent' and not is_mentioned and not from_owner:
+        logger.info("   🔇 静默模式，未被提及，仅归档")
+        archive_message(msg)
+        return
+
+    # 获取群成员和历史消息（带缓存，减少 API 调用）
+    group_members = []
+    recent_history = []
+    if group_id:
+        group_members = _members_cache.get(group_id)
+        if group_members is None:
+            group_members = get_group_members(group_id)
+            if group_members:
+                _members_cache.set(group_id, group_members)
+        recent_history = _history_cache.get(group_id)
+        if recent_history is None:
+            recent_history = get_recent_history(group_id, limit=10)
+            if recent_history:
+                _history_cache.set(group_id, recent_history)
     
     # 将 API 拉到的历史消息归档到本地（自动去重）
     if recent_history and group_id:

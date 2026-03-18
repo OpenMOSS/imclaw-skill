@@ -71,6 +71,16 @@ class IMClawClient:
         resp.raise_for_status()
         return resp.json()
 
+    def _put(self, path: str, data: dict = None) -> Any:
+        resp = requests.put(f"{self.hub_url}{path}", headers=self._headers, json=data or {})
+        resp.raise_for_status()
+        return resp.json()
+
+    def _delete(self, path: str) -> Any:
+        resp = requests.delete(f"{self.hub_url}{path}", headers=self._headers)
+        resp.raise_for_status()
+        return resp.json()
+
     # ── Agent 信息 ──
 
     def get_profile(self) -> dict:
@@ -525,6 +535,185 @@ class IMClawClient:
             return parsed.get("mentions", [])
         except (json.JSONDecodeError, TypeError):
             return []
+
+    # ── 任务协调 ──
+
+    def list_tasks(self, group_id: str, status: str = None,
+                   assignee: str = None, parent_id: str = None) -> list[dict]:
+        """列出群聊中的任务
+
+        Args:
+            group_id: 群聊 ID
+            status: 筛选状态 (open/claimed/in_progress/done/cancelled)
+            assignee: 筛选认领者/被指派者的 agent_id
+            parent_id: 筛选父任务 ID（获取子任务列表）
+
+        Returns:
+            任务列表
+        """
+        params = {}
+        if status:
+            params["status"] = status
+        if assignee:
+            params["assignee"] = assignee
+        if parent_id:
+            params["parent_id"] = parent_id
+        return self._get(f"/api/v1/groups/{group_id}/tasks", params)
+
+    def create_task(self, group_id: str, title: str, description: str = "",
+                    priority: int = 0, parent_id: str = None,
+                    assigned_to_id: str = None, metadata: str = "") -> dict:
+        """创建任务
+
+        Args:
+            group_id: 群聊 ID
+            title: 任务标题
+            description: 任务描述
+            priority: 优先级 (0=normal, 1=high, 2=urgent)
+            parent_id: 父任务 ID（创建子任务时指定）
+            assigned_to_id: 直接指派给某个 agent
+            metadata: JSON 格式的扩展数据
+
+        Returns:
+            创建的任务对象
+        """
+        data = {"title": title, "description": description, "priority": priority}
+        if parent_id:
+            data["parent_task_id"] = parent_id
+        if assigned_to_id:
+            data["assigned_to_id"] = assigned_to_id
+        if metadata:
+            data["metadata"] = metadata
+        return self._post(f"/api/v1/groups/{group_id}/tasks", data)
+
+    def get_task_detail(self, task_id: str) -> dict:
+        """获取任务详情（含子任务列表和依赖状态）
+
+        Args:
+            task_id: 任务 ID
+
+        Returns:
+            任务详情，包含 children 和 dependencies
+        """
+        return self._get(f"/api/v1/tasks/{task_id}")
+
+    def update_task(self, task_id: str, **kwargs) -> dict:
+        """更新任务属性
+
+        Args:
+            task_id: 任务 ID
+            **kwargs: 可更新字段 (title, description, priority, status, metadata)
+
+        Returns:
+            更新后的任务对象
+        """
+        return self._patch(f"/api/v1/tasks/{task_id}", kwargs)
+
+    def delete_task(self, task_id: str) -> dict:
+        """删除任务
+
+        Args:
+            task_id: 任务 ID
+        """
+        return self._delete(f"/api/v1/tasks/{task_id}")
+
+    def claim_task(self, task_id: str) -> dict:
+        """认领任务（原子操作，使用分布式锁防止冲突）
+
+        Args:
+            task_id: 任务 ID
+
+        Returns:
+            认领后的任务对象
+        """
+        return self._post(f"/api/v1/tasks/{task_id}/claim")
+
+    def release_task(self, task_id: str) -> dict:
+        """释放已认领的任务
+
+        Args:
+            task_id: 任务 ID
+
+        Returns:
+            释放后的任务对象
+        """
+        return self._post(f"/api/v1/tasks/{task_id}/release")
+
+    def complete_task(self, task_id: str) -> dict:
+        """标记任务完成
+
+        Args:
+            task_id: 任务 ID
+
+        Returns:
+            完成的任务对象
+        """
+        return self._post(f"/api/v1/tasks/{task_id}/complete")
+
+    def cancel_task(self, task_id: str) -> dict:
+        """取消任务
+
+        Args:
+            task_id: 任务 ID
+
+        Returns:
+            取消后的任务对象
+        """
+        return self._post(f"/api/v1/tasks/{task_id}/cancel")
+
+    def assign_task(self, task_id: str, agent_id: str) -> dict:
+        """指派任务给指定 Agent
+
+        Args:
+            task_id: 任务 ID
+            agent_id: 目标 Agent ID
+
+        Returns:
+            更新后的任务对象
+        """
+        return self._post(f"/api/v1/tasks/{task_id}/assign", {"agent_id": agent_id})
+
+    def create_subtask(self, parent_task_id: str, title: str,
+                       description: str = "", priority: int = 0) -> dict:
+        """创建子任务
+
+        Args:
+            parent_task_id: 父任务 ID
+            title: 子任务标题
+            description: 子任务描述
+            priority: 优先级
+
+        Returns:
+            创建的子任务对象
+        """
+        return self._post(f"/api/v1/tasks/{parent_task_id}/subtasks", {
+            "title": title,
+            "description": description,
+            "priority": priority,
+        })
+
+    def set_dependencies(self, task_id: str, depends_on_ids: list[str]) -> dict:
+        """设置任务依赖关系
+
+        Args:
+            task_id: 任务 ID
+            depends_on_ids: 依赖的任务 ID 列表
+
+        Returns:
+            操作结果
+        """
+        return self._put(f"/api/v1/tasks/{task_id}/dependencies", {"depends_on": depends_on_ids})
+
+    def get_dependencies(self, task_id: str) -> list[dict]:
+        """查询任务依赖关系及完成状态
+
+        Args:
+            task_id: 任务 ID
+
+        Returns:
+            依赖列表，每项包含 task_id, title, status
+        """
+        return self._get(f"/api/v1/tasks/{task_id}/dependencies")
 
     # ── 事件处理 ──
 
