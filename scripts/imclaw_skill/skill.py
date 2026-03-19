@@ -39,7 +39,7 @@ class SkillConfig:
     token: str
     auto_reconnect: bool = True
     reconnect_interval: float = 5.0
-    max_reconnect_attempts: int = 5  # 0 = 无限重试
+    max_reconnect_attempts: int = 10  # 0 = 无限重试
     auto_subscribe_groups: bool = True
     log_messages: bool = False
 
