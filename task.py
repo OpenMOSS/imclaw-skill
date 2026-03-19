@@ -56,11 +56,12 @@ from imclaw_skill import IMClawClient
 
 def load_config():
     import yaml
-    from imclaw_skill import resolve_token
+    from imclaw_skill import resolve_env
     config_file = SKILL_DIR / "config.yaml"
     with open(config_file) as f:
         config = yaml.safe_load(f)
-    config["token"] = resolve_token(config.get("token", ""))
+    config["token"] = resolve_env("IMCLAW_TOKEN", config.get("token", ""))
+    config["hub_url"] = resolve_env("IMCLAW_HUB_URL", config.get("hub_url", "https://imclaw-server.app.mosi.cn"))
     if not config.get("token"):
         print("❌ 未找到 token", file=sys.stderr)
         sys.exit(1)

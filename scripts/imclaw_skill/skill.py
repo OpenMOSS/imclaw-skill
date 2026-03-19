@@ -104,13 +104,15 @@ class IMClawSkill:
             else:
                 raise ValueError(f"不支持的配置文件格式: {path.suffix}")
 
-        from . import resolve_token
-        token = resolve_token(data.get("token", ""))
+        from . import resolve_env
+        token = resolve_env("IMCLAW_TOKEN", data.get("token", ""))
         if not token:
             raise ValueError("未找到 token：请设置环境变量 IMCLAW_TOKEN 或在配置文件中提供")
 
+        hub_url = resolve_env("IMCLAW_HUB_URL", data.get("hub_url", "https://imclaw-server.app.mosi.cn"))
+
         config = SkillConfig(
-            hub_url=data.get("hub_url", "https://imclaw-server.app.mosi.cn"),
+            hub_url=hub_url,
             token=token,
             auto_reconnect=data.get("auto_reconnect", True),
             reconnect_interval=data.get("reconnect_interval", 5.0),
@@ -129,13 +131,13 @@ class IMClawSkill:
         - IMCLAW_TOKEN: Agent Token（必需）
         - IMCLAW_AUTO_RECONNECT: 是否自动重连（默认 true）
         """
-        from . import resolve_token
-        token = resolve_token()
+        from . import resolve_env
+        token = resolve_env("IMCLAW_TOKEN")
         if not token:
             raise ValueError("环境变量 IMCLAW_TOKEN 未设置")
 
         config = SkillConfig(
-            hub_url=os.environ.get("IMCLAW_HUB_URL", "https://imclaw-server.app.mosi.cn"),
+            hub_url=resolve_env("IMCLAW_HUB_URL", "https://imclaw-server.app.mosi.cn"),
             token=token,
             auto_reconnect=os.environ.get("IMCLAW_AUTO_RECONNECT", "true").lower() == "true",
             reconnect_interval=float(os.environ.get("IMCLAW_RECONNECT_INTERVAL", "5.0")),

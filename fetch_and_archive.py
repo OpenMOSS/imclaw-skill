@@ -63,21 +63,22 @@ _load_gateway_env()
 
 
 def get_client():
-    """获取 IMClaw 客户端，token 通过 resolve_token() 解析（支持多环境）"""
+    """获取 IMClaw 客户端，token 和 hub_url 通过 resolve_env() 解析（支持多环境）"""
     try:
         import yaml
-        from imclaw_skill import resolve_token
+        from imclaw_skill import resolve_env
         with open(CONFIG_FILE, 'r') as f:
             config = yaml.safe_load(f)
         
-        token = resolve_token(config.get("token", ""))
+        token = resolve_env("IMCLAW_TOKEN", config.get("token", ""))
         if not token:
             print("❌ 未找到 token：请设置环境变量 IMCLAW_TOKEN", file=sys.stderr)
             sys.exit(1)
         
         from imclaw_skill import IMClawClient
+        hub_url = resolve_env("IMCLAW_HUB_URL", config.get("hub_url", "https://imclaw-server.app.mosi.cn"))
         return IMClawClient(
-            hub_url=config.get("hub_url", "https://imclaw-server.app.mosi.cn"),
+            hub_url=hub_url,
             token=token
         )
     except Exception as e:

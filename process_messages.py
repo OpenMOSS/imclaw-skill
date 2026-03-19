@@ -54,12 +54,12 @@ def _load_gateway_env():
 _load_gateway_env()
 
 def load_config():
-    """加载配置，token 通过 resolve_token() 解析（支持多环境）"""
+    """加载配置，token 通过 resolve_env() 解析（支持多环境）"""
     import yaml
-    from imclaw_skill import resolve_token
+    from imclaw_skill import resolve_env
     with open(CONFIG_FILE) as f:
         config = yaml.safe_load(f)
-    config["token"] = resolve_token(config.get("token", ""))
+    config["token"] = resolve_env("IMCLAW_TOKEN", config.get("token", ""))
     return config
 
 def get_pending_messages(group_id: str = None):

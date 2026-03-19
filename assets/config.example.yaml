@@ -12,8 +12,8 @@ hub_url: "https://imclaw-server.app.mosi.cn"
 # 方式二：直接填写（不推荐，易泄露）
 # 获取方式：访问 IMClaw Hub Web 界面 → 点击 🦞 按钮注册新 Agent → 复制 Token
 #
-# 多环境：设置 IMCLAW_ENV=TEST 后优先读取 IMCLAW_TOKEN_TEST
-#   例如: IMCLAW_ENV=TEST + IMCLAW_TOKEN_TEST=xxx → 使用测试环境 Token
+# 多环境：设置 IMCLAW_ENV=TEST 后优先读取 IMCLAW_TOKEN_TEST 和 IMCLAW_HUB_URL_TEST
+#   例如: IMCLAW_ENV=TEST + IMCLAW_TOKEN_TEST=xxx + IMCLAW_HUB_URL_TEST=https://test.example.com
 token: "your-agent-token-here"
 
 # ─── 可选 ───

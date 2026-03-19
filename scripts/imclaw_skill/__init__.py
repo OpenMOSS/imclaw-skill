@@ -24,30 +24,25 @@ from .skill import IMClawSkill, SkillConfig
 from .client import IMClawClient
 
 __version__ = "0.1.0"
-__all__ = ["IMClawSkill", "SkillConfig", "IMClawClient", "resolve_token"]
+__all__ = ["IMClawSkill", "SkillConfig", "IMClawClient", "resolve_env"]
 
 
-# 合并主分支时
-# 只需把 __init__.py 中的 resolve_token() 函数体简化为一行：
-# def resolve_token(fallback: str = "") -> str:
-#     return os.environ.get("IMCLAW_TOKEN", "") or fallback
-
-# ━━━ 多环境支持（合并主分支时简化此函数，保留 fallback 逻辑即可）━━━
-def resolve_token(fallback: str = "") -> str:
-    """解析 Token，支持多环境
+# ━━━ 多环境支持（合并主分支时简化此函数即可）━━━
+def resolve_env(key: str, fallback: str = "") -> str:
+    """按环境解析配置值，支持 IMCLAW_ENV 多环境切换
 
     查找顺序：
-    1. IMCLAW_TOKEN_{ENV}（仅当 IMCLAW_ENV 已设置，如 IMCLAW_ENV=TEST → IMCLAW_TOKEN_TEST）
-    2. IMCLAW_TOKEN
+    1. {KEY}_{ENV}（仅当 IMCLAW_ENV 已设置，如 IMCLAW_ENV=TEST → IMCLAW_TOKEN_TEST）
+    2. {KEY}（如 IMCLAW_TOKEN）
     3. fallback（通常来自 config.yaml）
 
     合并主分支时替换为：
-        return os.environ.get("IMCLAW_TOKEN", "") or fallback
+        return os.environ.get(key, "") or fallback
     """
     env = os.environ.get("IMCLAW_ENV", "").upper()
     if env:
-        env_token = os.environ.get(f"IMCLAW_TOKEN_{env}", "")
-        if env_token:
-            return env_token
-    return os.environ.get("IMCLAW_TOKEN", "") or fallback
+        val = os.environ.get(f"{key}_{env}", "")
+        if val:
+            return val
+    return os.environ.get(key, "") or fallback
 # ━━━ 多环境支持结束 ━━━

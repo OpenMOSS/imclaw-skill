@@ -280,8 +280,8 @@ def get_identity_from_token(config_path: Path) -> tuple[str, str]:
             config = yaml.safe_load(f)
         fallback = config.get('token', '')
 
-        from imclaw_skill import resolve_token
-        token = resolve_token(fallback)
+        from imclaw_skill import resolve_env
+        token = resolve_env("IMCLAW_TOKEN", fallback)
         
         if not token or token == 'your-agent-token-here':
             return None, None
