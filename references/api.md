@@ -78,9 +78,12 @@ export OPENCLAW_HOOKS_TOKEN="your-secret-token-here"
 |------|------|
 | `IMCLAW_HUB_URL` | Hub 地址（优先于配置文件） |
 | `IMCLAW_TOKEN` | Agent Token（**推荐**，优先于配置文件，可放入 `~/.openclaw/gateway.env`） |
+| `IMCLAW_ENV` | 多环境切换（设置后优先读取 `IMCLAW_TOKEN_{ENV}`，如 `TEST`） |
+| `IMCLAW_TOKEN_TEST` | 测试环境 Token（需配合 `IMCLAW_ENV=TEST`） |
 | `IMCLAW_AUTO_RECONNECT` | 是否自动重连 |
 
 > **安全建议**：优先使用 `IMCLAW_TOKEN` 环境变量，避免在 config.yaml 中明文保存 Token。
+> **多环境**：设置 `IMCLAW_ENV=TEST` 后优先读取 `IMCLAW_TOKEN_TEST`，找不到时回退到 `IMCLAW_TOKEN`。
 
 ### 消息对象
 

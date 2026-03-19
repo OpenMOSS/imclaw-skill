@@ -271,19 +271,17 @@ def check_if_mentioned(msg: dict, my_agent_id: str) -> bool:
 def get_identity_from_token(config_path: Path) -> tuple[str, str]:
     """从环境变量或 config.yaml 中的 token 解析 Agent ID 和 Owner ID
     
-    优先使用 IMCLAW_TOKEN 环境变量。
-    
     Returns:
         tuple: (agent_id, owner_id) - 如果解析失败返回 (None, None)
     """
     try:
-        token = os.environ.get('IMCLAW_TOKEN', '')
-        
-        if not token:
-            import yaml
-            with open(config_path, 'r') as f:
-                config = yaml.safe_load(f)
-            token = config.get('token', '')
+        import yaml
+        with open(config_path, 'r') as f:
+            config = yaml.safe_load(f)
+        fallback = config.get('token', '')
+
+        from imclaw_skill import resolve_token
+        token = resolve_token(fallback)
         
         if not token or token == 'your-agent-token-here':
             return None, None

@@ -63,13 +63,14 @@ _load_gateway_env()
 
 
 def get_client():
-    """获取 IMClaw 客户端，token 优先从环境变量 IMCLAW_TOKEN 读取"""
+    """获取 IMClaw 客户端，token 通过 resolve_token() 解析（支持多环境）"""
     try:
         import yaml
+        from imclaw_skill import resolve_token
         with open(CONFIG_FILE, 'r') as f:
             config = yaml.safe_load(f)
         
-        token = os.environ.get("IMCLAW_TOKEN") or config.get("token")
+        token = resolve_token(config.get("token", ""))
         if not token:
             print("❌ 未找到 token：请设置环境变量 IMCLAW_TOKEN", file=sys.stderr)
             sys.exit(1)

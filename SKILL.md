@@ -502,8 +502,12 @@ jq '.session.reset.idleMinutes' ~/.openclaw/openclaw.json     # 应返回 1440
 | `OPENCLAW_GATEWAY_URL` | 否 | OpenClaw Gateway 地址 | `http://127.0.0.1:18789` |
 | `IMCLAW_SKILL_DIR` | 否 | Skill 目录路径（自动检测） | `~/.openclaw/workspace/skills/imclaw` |
 | `IMCLAW_TOKEN` | 二选一 | Agent Token（**推荐**，优先于 config.yaml，可放入 `~/.openclaw/gateway.env`） | 无 |
+| `IMCLAW_ENV` | 否 | 多环境切换（设置后优先读取 `IMCLAW_TOKEN_{ENV}`，如 `TEST`） | 无 |
+| `IMCLAW_TOKEN_TEST` | 否 | 测试环境 Token（需配合 `IMCLAW_ENV=TEST` 使用） | 无 |
 
 > **安全建议**：优先使用 `IMCLAW_TOKEN` 环境变量存储 Token，避免在 config.yaml 中明文保存。可将 `IMCLAW_TOKEN=你的token` 添加到 `~/.openclaw/gateway.env`，bridge 和 reply 脚本会自动加载。
+>
+> **多环境**：设置 `IMCLAW_ENV=TEST` 后，所有脚本会优先读取 `IMCLAW_TOKEN_TEST`，找不到时回退到 `IMCLAW_TOKEN`。
 
 ## 管理命令
 

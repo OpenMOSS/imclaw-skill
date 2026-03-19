@@ -288,13 +288,12 @@ def load_session(group_id: str = None) -> dict:
 
 
 def load_config():
-    """加载配置，token 优先从环境变量 IMCLAW_TOKEN 读取"""
+    """加载配置，token 通过 resolve_token() 解析（支持多环境）"""
     import yaml
+    from imclaw_skill import resolve_token
     with open(CONFIG_FILE) as f:
         config = yaml.safe_load(f)
-    env_token = os.environ.get("IMCLAW_TOKEN")
-    if env_token:
-        config["token"] = env_token
+    config["token"] = resolve_token(config.get("token", ""))
     if not config.get("token"):
         print("❌ 未找到 token：请设置环境变量 IMCLAW_TOKEN 或在 config.yaml 中配置", file=sys.stderr)
         sys.exit(1)

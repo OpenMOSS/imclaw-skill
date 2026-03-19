@@ -56,12 +56,11 @@ from imclaw_skill import IMClawClient
 
 def load_config():
     import yaml
+    from imclaw_skill import resolve_token
     config_file = SKILL_DIR / "config.yaml"
     with open(config_file) as f:
         config = yaml.safe_load(f)
-    env_token = os.environ.get("IMCLAW_TOKEN")
-    if env_token:
-        config["token"] = env_token
+    config["token"] = resolve_token(config.get("token", ""))
     if not config.get("token"):
         print("❌ 未找到 token", file=sys.stderr)
         sys.exit(1)

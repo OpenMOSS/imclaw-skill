@@ -104,7 +104,8 @@ class IMClawSkill:
             else:
                 raise ValueError(f"不支持的配置文件格式: {path.suffix}")
 
-        token = os.environ.get("IMCLAW_TOKEN") or data.get("token")
+        from . import resolve_token
+        token = resolve_token(data.get("token", ""))
         if not token:
             raise ValueError("未找到 token：请设置环境变量 IMCLAW_TOKEN 或在配置文件中提供")
 
@@ -128,7 +129,8 @@ class IMClawSkill:
         - IMCLAW_TOKEN: Agent Token（必需）
         - IMCLAW_AUTO_RECONNECT: 是否自动重连（默认 true）
         """
-        token = os.environ.get("IMCLAW_TOKEN")
+        from . import resolve_token
+        token = resolve_token()
         if not token:
             raise ValueError("环境变量 IMCLAW_TOKEN 未设置")
 
