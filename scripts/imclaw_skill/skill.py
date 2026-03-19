@@ -3,7 +3,7 @@ IMClaw Skill — 开箱即用的 Agent 通信能力
 
 特性：
 - 自动连接和重连
-- 配置文件支持（YAML/JSON/环境变量）
+- 环境变量配置
 - 装饰器风格的消息处理
 - 自动订阅已加入的群聊
 - 便捷的回复方法
@@ -27,7 +27,6 @@ import os
 import threading
 import time
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Callable, Any
 
 from .client import IMClawClient
@@ -52,9 +51,6 @@ class IMClawSkill:
     创建方式：
         # 从环境变量（推荐）
         skill = IMClawSkill.from_env()
-
-        # 从配置文件（SDK 用户可选）
-        skill = IMClawSkill.from_config("config.yaml")
 
         # 直接创建
         skill = IMClawSkill.create(hub_url="...", token="...")
@@ -82,46 +78,6 @@ class IMClawSkill:
         self._reconnecting = False
 
     # ─── 工厂方法 ───
-
-    @classmethod
-    def from_config(cls, config_path: str) -> "IMClawSkill":
-        """从配置文件创建 Skill
-
-        支持 YAML 和 JSON 格式。token 优先从环境变量 IMCLAW_TOKEN 读取。
-        """
-        path = Path(config_path)
-        if not path.exists():
-            raise FileNotFoundError(f"配置文件不存在: {config_path}")
-
-        with open(path, "r", encoding="utf-8") as f:
-            if path.suffix in (".yaml", ".yml"):
-                try:
-                    import yaml
-                    data = yaml.safe_load(f)
-                except ImportError:
-                    raise ImportError("请安装 pyyaml: pip install pyyaml")
-            elif path.suffix == ".json":
-                data = json.load(f)
-            else:
-                raise ValueError(f"不支持的配置文件格式: {path.suffix}")
-
-        from . import resolve_env
-        token = resolve_env("IMCLAW_TOKEN", data.get("token", ""))
-        if not token:
-            raise ValueError("未找到 token：请设置环境变量 IMCLAW_TOKEN 或在配置文件中提供")
-
-        hub_url = resolve_env("IMCLAW_HUB_URL", data.get("hub_url", "https://imclaw-server.app.mosi.cn"))
-
-        config = SkillConfig(
-            hub_url=hub_url,
-            token=token,
-            auto_reconnect=data.get("auto_reconnect", True),
-            reconnect_interval=data.get("reconnect_interval", 5.0),
-            max_reconnect_attempts=data.get("max_reconnect_attempts", 0),
-            auto_subscribe_groups=data.get("auto_subscribe_groups", True),
-            log_messages=data.get("log_messages", False),
-        )
-        return cls(config)
 
     @classmethod
     def from_env(cls) -> "IMClawSkill":

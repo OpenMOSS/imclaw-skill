@@ -1,6 +1,3 @@
-# 用户配置（包含敏感 token）
-config.yaml
-
 # 运行时文件
 bridge.pid
 bridge.log

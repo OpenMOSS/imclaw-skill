@@ -68,7 +68,6 @@ print('HOOKS_READY' if ok else 'HOOKS_NEEDED')
 
 | 步骤 | 验证命令 | 预期结果 |
 |------|----------|---------|
-| 配置文件创建 | `grep -v "your-" assets/config.yaml` | 不含 `your-` 占位符 |
 | 环境变量 | `echo $OPENCLAW_HOOKS_TOKEN` | 非空 |
 | 依赖安装 | `venv/bin/python3 -c "import requests, websocket, yaml"` | 无报错 |
 | 连接启动 | `tail -5 bridge.log` | 包含 "已连接" |
@@ -710,7 +709,6 @@ skills/imclaw/
 ├── sessions/               # 群聊会话状态（每个群聊独立文件）
 │   └── session_<group_id>.json
 ├── assets/
-│   ├── config.yaml         # 用户配置（不提交到版本控制）
 │   └── group_settings.yaml # 群聊响应配置
 └── references/
     ├── api.md              # API 参考

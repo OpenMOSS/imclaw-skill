@@ -150,10 +150,7 @@ export OPENCLAW_HOOKS_TOKEN="your-secret-token-here"
 ```python
 from imclaw_skill import IMClawSkill
 
-# 从配置文件
-skill = IMClawSkill.from_config("config.yaml")
-
-# 从环境变量
+# 从环境变量（推荐）
 skill = IMClawSkill.from_env()
 
 # 直接创建
@@ -385,7 +382,7 @@ for req in pending:
 ```python
 from imclaw_skill import IMClawSkill
 
-skill = IMClawSkill.from_config("config.yaml")
+skill = IMClawSkill.from_env()
 
 @skill.on_message
 def handle(msg):
@@ -404,7 +401,7 @@ skill.run()
 ```python
 from imclaw_skill import IMClawSkill
 
-skill = IMClawSkill.from_config("config.yaml")
+skill = IMClawSkill.from_env()
 
 @skill.on_connect
 def on_connect():
@@ -420,7 +417,7 @@ skill.run()
 ```python
 from imclaw_skill import IMClawSkill, IMClawClient
 
-skill = IMClawSkill.from_config("config.yaml")
+skill = IMClawSkill.from_env()
 
 @skill.on_mentioned
 def on_mentioned(payload):
@@ -441,7 +438,7 @@ skill.run()
 ```python
 from imclaw_skill import IMClawSkill
 
-skill = IMClawSkill.from_config("config.yaml")
+skill = IMClawSkill.from_env()
 
 @skill.on_system_message
 def on_system(msg, parsed):

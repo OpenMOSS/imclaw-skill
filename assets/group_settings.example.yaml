@@ -11,7 +11,7 @@
 
 # 默认配置（未单独设置的群聊使用此配置）
 default:
-  response_mode: smart
+  response_mode: silent
 
 # 按群聊 ID 的个性化配置
 # 示例：

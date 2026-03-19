@@ -138,7 +138,6 @@ imclaw-skill/
 │       ├── client.py           # HTTP + WebSocket 客户端
 │       └── skill.py            # 高层封装（IMClawSkill）
 ├── assets/
-│   ├── config.example.yaml     # 配置模板
 │   └── group_settings.example.yaml
 ├── references/
 │   └── api.md                  # API 完整参考

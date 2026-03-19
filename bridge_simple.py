@@ -298,6 +298,8 @@ def check_if_mentioned(msg: dict, my_agent_id: str) -> bool:
             parsed = json.loads(metadata)
         else:
             parsed = metadata
+        if not isinstance(parsed, dict):
+            return False
         mentions = parsed.get("mentions", [])
         return any(m.get("id") == my_agent_id for m in mentions)
     except (json.JSONDecodeError, TypeError):
