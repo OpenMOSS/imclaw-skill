@@ -868,7 +868,21 @@ def on_task_updated(payload):
 
 @skill.on_authorization_updated
 def on_authorization_updated(payload):
-    """授权状态变更 → 唤醒主 Session 通知结果"""
+    """授权状态变更 → 写入队列 + 延迟唤醒主 Session
+    
+    为什么不能立即 wake？
+    ─────────────────────
+    典型时序：agent 调用 reply.py --auth-request → IMClaw Hub 生成授权卡片 → 主人秒批
+    → bridge 收到 authorization_updated 事件 → 发 wake
+    
+    问题：此时 agent 的 session 很可能还没结束当前 turn（还在说"等待主人审批"），
+    Gateway 无法往一个正在执行中的 session 注入新消息，wake 会被静默丢弃。
+    
+    解决：
+    1. 写入消息队列（与普通消息一致），确保授权结果不丢失
+    2. 后台线程延迟发 wake（5s/15s/45s），等 session turn 结束后再唤醒
+    3. 每次 wake 前检查队列：如果授权结果已被 heartbeat 或其他消息消费，则跳过
+    """
     status = payload.get('status', '?')
     task = payload.get('task_description', '?')
     group_id = payload.get('group_id', '')
@@ -877,18 +891,52 @@ def on_authorization_updated(payload):
     risk_level = payload.get('risk_level', '?')
     logger.info(f"🔐 授权事件: {status} - {task} (群:{group_id[:8]})")
 
-    if status in ('approved', 'rejected'):
-        try:
-            import requests
-            gateway_url = os.environ.get("OPENCLAW_GATEWAY_URL", "http://127.0.0.1:18789")
-            status_label = "已授权 ✅" if status == "approved" else "已拒绝 ❌"
+    if status not in ('approved', 'rejected'):
+        return
 
-            if status == "approved":
-                action_hint = f"已授权，请立即执行任务「{task}」，并将结果回复到群聊。"
-            else:
-                action_hint = f"已拒绝，请回复群聊告知 {requester_name} 该请求已被主人拒绝。"
+    status_label = "已授权 ✅" if status == "approved" else "已拒绝 ❌"
+    if status == "approved":
+        action_hint = f"已授权，请立即执行任务「{task}」，并将结果回复到群聊。"
+    else:
+        action_hint = f"已拒绝，请回复群聊告知 {requester_name} 该请求已被主人拒绝。"
 
-            wake_text = f"""[IMClaw] 授权结果通知
+    auth_content = (
+        f"[授权结果] {status_label}\n"
+        f"任务: {task}\n"
+        f"请求者: {requester_name} ({requester_type})\n"
+        f"风险等级: {risk_level}\n"
+        f"下一步: {action_hint}"
+    )
+
+    # ── 步骤 1：写入队列（持久化，heartbeat 兜底） ──
+    # 与普通消息的 write_to_queue 一致，保证即使所有 wake 都失败，
+    # 下一次 heartbeat 扫描队列时也能发现并处理。
+    if group_id:
+        queue_msg = {
+            "type": "authorization_result",
+            "content": auth_content,
+            "content_type": "authorization_result",
+            "group_id": group_id,
+            "sender_id": "system",
+            "sender_type": "system",
+            "sender_name": "授权系统",
+            "created_at": datetime.now().isoformat(),
+            "metadata": {"authorization": payload},
+            "_from_owner": True,
+            "_context": {
+                "my_agent_id": MY_AGENT_ID,
+                "my_profile": MY_PROFILE,
+                "response_mode": get_response_mode(group_id),
+                "is_mentioned": True,
+                "group_members": _members_cache.get(group_id) or [],
+                "recent_history": [],
+            },
+        }
+        write_to_queue(queue_msg)
+        logger.info(f"   📝 授权结果已写入队列: {group_id[:8]}")
+
+    # ── 步骤 2：后台延迟 wake（等 session turn 结束再唤醒） ──
+    wake_text = f"""[IMClaw] 授权结果通知
 
 主人对以下授权请求做出了决定：{status_label}
 
@@ -907,18 +955,42 @@ def on_authorization_updated(payload):
 规则文件: {_RULES_PATH}
 所有命令在 cd {_SKILL_DIR_STR} 下执行。"""
 
-            resp = requests.post(
-                f"{gateway_url}/hooks/wake",
-                json={"text": wake_text},
-                headers={
-                    "Authorization": f"Bearer {HOOKS_TOKEN}",
-                    "Content-Type": "application/json"
-                },
-                timeout=5
-            )
-            logger.info(f"   🔔 授权结果已通知主 Session: HTTP {resp.status_code}")
-        except Exception as e:
-            logger.error(f"   ❌ 授权结果通知失败: {e}")
+    def _delayed_wake():
+        """后台线程：延迟后尝试 wake，递增间隔重试。
+        
+        为什么是 5/15/45 秒？
+        - 5s：大多数 turn 在几秒内结束，5s 后大概率 session 已空闲
+        - 15s：如果 5s 时 session 仍忙（复杂任务），15s 再试
+        - 45s：最后兜底，再不行就等 heartbeat（约 10 分钟）自动消费队列
+        """
+        import requests
+        gateway_url = os.environ.get("OPENCLAW_GATEWAY_URL", "http://127.0.0.1:18789")
+        headers = {"Authorization": f"Bearer {HOOKS_TOKEN}", "Content-Type": "application/json"}
+
+        for attempt, delay in enumerate((5, 15, 45), 1):
+            time.sleep(delay)
+            # 检查队列：如果 authorization_result 文件已不在，说明已被消费，无需再 wake
+            if group_id:
+                gq = QUEUE_DIR / group_id
+                if gq.exists() and not any(
+                    "authorization_result" in f.read_text(encoding="utf-8")[:200]
+                    for f in gq.glob("*.json")
+                ):
+                    logger.info(f"   ✅ 授权队列已被消费，跳过 wake #{attempt}")
+                    return
+            try:
+                resp = requests.post(
+                    f"{gateway_url}/hooks/wake", json={"text": wake_text},
+                    headers=headers, timeout=5
+                )
+                logger.info(f"   🔔 授权 wake #{attempt} (延迟{delay}s): HTTP {resp.status_code}")
+                if resp.status_code < 300:
+                    return
+            except Exception as e:
+                logger.warning(f"   ⚠️ 授权 wake #{attempt} 失败: {e}")
+
+    threading.Thread(target=_delayed_wake, daemon=True).start()
+    logger.info(f"   🔔 授权 wake 已排程（5s/15s/45s 延迟重试）")
 
 @skill.on_error
 def on_error(e):
