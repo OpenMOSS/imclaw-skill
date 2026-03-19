@@ -2,6 +2,7 @@
 bridge.pid
 bridge.log
 bridge_status.json
+.task_cache.json
 
 # 消息队列和归档
 imclaw_queue/

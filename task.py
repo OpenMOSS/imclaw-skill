@@ -29,14 +29,32 @@ from pathlib import Path
 SKILL_DIR = Path(__file__).parent.resolve()
 sys.path.insert(0, str(SKILL_DIR / "scripts"))
 
+
+def _load_gateway_env():
+    env_file = Path.home() / ".openclaw" / "gateway.env"
+    if not env_file.exists():
+        return
+    for line in env_file.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" in line:
+            key, _, value = line.partition("=")
+            os.environ.setdefault(key.strip(), value.strip())
+
+
+_load_gateway_env()
+
 from imclaw_skill import IMClawClient
+
+_TASK_CACHE = SKILL_DIR / ".task_cache.json"
 
 
 def load_config():
     from imclaw_skill import resolve_env
     token = resolve_env("IMCLAW_TOKEN")
     if not token:
-        print("❌ 未找到 token", file=sys.stderr)
+        print("❌ 未找到 token，请在 ~/.openclaw/gateway.env 中设置 IMCLAW_TOKEN", file=sys.stderr)
         sys.exit(1)
     return {
         "token": token,
@@ -47,6 +65,42 @@ def load_config():
 def get_client():
     config = load_config()
     return IMClawClient(config["hub_url"], config["token"])
+
+
+def _save_task_cache(tasks: list[dict]):
+    """保存任务列表到本地缓存，供短 ID 补全使用"""
+    try:
+        cache = {}
+        if _TASK_CACHE.exists():
+            cache = json.loads(_TASK_CACHE.read_text())
+        for t in tasks:
+            cache[t["id"]] = t.get("title", "")
+        _TASK_CACHE.write_text(json.dumps(cache, ensure_ascii=False))
+    except Exception:
+        pass
+
+
+def resolve_task_id(short_id: str) -> str:
+    """将短 ID（前缀）补全为完整 UUID，无法补全时原样返回"""
+    if len(short_id) >= 36:
+        return short_id
+    if not _TASK_CACHE.exists():
+        print(f"⚠️ 短 ID 需要先执行 --list 建立缓存，尝试原样使用: {short_id}", file=sys.stderr)
+        return short_id
+    try:
+        cache = json.loads(_TASK_CACHE.read_text())
+        matches = [full_id for full_id in cache if full_id.startswith(short_id)]
+        if len(matches) == 1:
+            print(f"  🔍 短 ID {short_id} → {matches[0][:8]}...{matches[0][-4:]}")
+            return matches[0]
+        if len(matches) > 1:
+            print(f"⚠️ 短 ID {short_id} 匹配到多个任务，请提供更长的前缀:", file=sys.stderr)
+            for m in matches:
+                print(f"  [{m[:12]}] {cache[m]}", file=sys.stderr)
+            sys.exit(1)
+    except Exception:
+        pass
+    return short_id
 
 
 def cmd_list(args):
@@ -60,6 +114,7 @@ def cmd_list(args):
     if not tasks:
         print("📋 暂无任务")
         return
+    _save_task_cache(tasks)
     for t in tasks:
         status_icon = {
             "open": "⬜", "claimed": "🔒", "in_progress": "🔄",
@@ -85,8 +140,9 @@ def cmd_create(args):
 
 def cmd_claim(args):
     client = get_client()
+    task_id = resolve_task_id(args.claim)
     try:
-        task = client.claim_task(args.claim)
+        task = client.claim_task(task_id)
         print(f"🔒 已认领: [{task['id'][:8]}] {task['title']}")
     except Exception as e:
         print(f"❌ 认领失败: {e}", file=sys.stderr)
@@ -95,19 +151,22 @@ def cmd_claim(args):
 
 def cmd_complete(args):
     client = get_client()
-    task = client.complete_task(args.complete)
+    task_id = resolve_task_id(args.complete)
+    task = client.complete_task(task_id)
     print(f"✅ 已完成: [{task['id'][:8]}] {task['title']}")
 
 
 def cmd_release(args):
     client = get_client()
-    task = client.release_task(args.release)
+    task_id = resolve_task_id(args.release)
+    task = client.release_task(task_id)
     print(f"🔓 已释放: [{task['id'][:8]}] {task['title']}")
 
 
 def cmd_cancel(args):
     client = get_client()
-    task = client.cancel_task(args.cancel)
+    task_id = resolve_task_id(args.cancel)
+    task = client.cancel_task(task_id)
     print(f"❌ 已取消: [{task['id'][:8]}] {task['title']}")
 
 
@@ -116,7 +175,8 @@ def cmd_assign(args):
     if not args.agent_id:
         print("❌ 需要指定 --agent-id", file=sys.stderr)
         sys.exit(1)
-    task = client.assign_task(args.assign, args.agent_id)
+    task_id = resolve_task_id(args.assign)
+    task = client.assign_task(task_id, args.agent_id)
     print(f"👤 已指派: [{task['id'][:8]}] {task['title']} → {args.agent_id[:8]}")
 
 
@@ -125,8 +185,9 @@ def cmd_subtask(args):
     if not args.parent:
         print("❌ 需要指定 --parent <parent_task_id>", file=sys.stderr)
         sys.exit(1)
+    parent_id = resolve_task_id(args.parent)
     task = client.create_subtask(
-        args.parent, args.subtask,
+        parent_id, args.subtask,
         description=args.desc or "",
         priority=args.priority or 0,
     )
@@ -135,7 +196,8 @@ def cmd_subtask(args):
 
 def cmd_deps(args):
     client = get_client()
-    deps = client.get_dependencies(args.deps)
+    task_id = resolve_task_id(args.deps)
+    deps = client.get_dependencies(task_id)
     if not deps:
         print("🔗 无依赖")
         return
@@ -150,13 +212,16 @@ def cmd_set_deps(args):
     if not args.depends_on:
         print("❌ 需要指定 --depends-on <task_id> ...", file=sys.stderr)
         sys.exit(1)
-    client.set_dependencies(args.set_deps, args.depends_on)
-    print(f"🔗 依赖已更新: {len(args.depends_on)} 个依赖")
+    task_id = resolve_task_id(args.set_deps)
+    dep_ids = [resolve_task_id(d) for d in args.depends_on]
+    client.set_dependencies(task_id, dep_ids)
+    print(f"🔗 依赖已更新: {len(dep_ids)} 个依赖")
 
 
 def cmd_detail(args):
     client = get_client()
-    detail = client.get_task_detail(args.detail)
+    task_id = resolve_task_id(args.detail)
+    detail = client.get_task_detail(task_id)
     print(json.dumps(detail, indent=2, ensure_ascii=False))
 
 
