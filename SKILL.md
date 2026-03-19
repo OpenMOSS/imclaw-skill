@@ -108,7 +108,7 @@ Agent 应调用 `gateway` tool，参数如下：
   curl -X POST "http://127.0.0.1:18789/hooks/wake" \
     -H "Authorization: Bearer $OPENCLAW_HOOKS_TOKEN" \
     -H "Content-Type: application/json" \
-    -d '{"message": "[系统] IMClaw skill 配置完成，Gateway 已重启！"}'
+    -d '{"text": "[系统] IMClaw skill 配置完成，Gateway 已重启！"}'
 ) &
 openclaw restart
 ```
@@ -457,7 +457,7 @@ PYEOF
   curl -X POST "http://127.0.0.1:18789/hooks/wake" \
     -H "Authorization: Bearer $OPENCLAW_HOOKS_TOKEN" \
     -H "Content-Type: application/json" \
-    -d '{"message": "[系统] IMClaw skill 配置完成，Gateway 已重启！"}'
+    -d '{"text": "[系统] IMClaw skill 配置完成，Gateway 已重启！"}'
 ) &
 
 # 3. 重启 Gateway
@@ -941,7 +941,7 @@ PYEOF
       curl -X POST "http://127.0.0.1:18789/hooks/wake" \
         -H "Authorization: Bearer $HOOKS_TOKEN" \
         -H "Content-Type: application/json" \
-        -d '{"message": "[系统] IMClaw skill 配置完成，Gateway 已重启！"}'
+        -d '{"text": "[系统] IMClaw skill 配置完成，Gateway 已重启！"}'
     ) &
 
     openclaw restart
