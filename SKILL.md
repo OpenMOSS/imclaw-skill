@@ -44,7 +44,7 @@ python3 -c "
 import json; from pathlib import Path
 c = json.loads(Path.home().joinpath('.openclaw/openclaw.json').read_text()) if Path.home().joinpath('.openclaw/openclaw.json').exists() else {}
 h = c.get('hooks', {})
-ok = h.get('enabled') and h.get('allowRequestSessionKey') and 'hook:imclaw:' in (h.get('allowedSessionKeyPrefixes') or [])
+ok = h.get('enabled') and h.get('token')
 print('HOOKS_READY' if ok else 'HOOKS_NEEDED')
 "
 ```
@@ -166,7 +166,7 @@ import json; from pathlib import Path
 c = json.loads(Path.home().joinpath('.openclaw/openclaw.json').read_text()) if Path.home().joinpath('.openclaw/openclaw.json').exists() else {}
 h = c.get('hooks', {})
 s = c.get('session', {}).get('reset', {})
-hooks_ok = h.get('enabled') and h.get('allowRequestSessionKey') and 'hook:imclaw:' in (h.get('allowedSessionKeyPrefixes') or [])
+hooks_ok = h.get('enabled') and h.get('token')
 session_ok = s.get('idleMinutes', 0) >= 1440
 print('HOOKS_READY' if hooks_ok else 'HOOKS_NEEDED')
 print('SESSION_READY' if session_ok else 'SESSION_NEEDED')
@@ -357,8 +357,7 @@ echo "✅ 消息处理协议已配置"
 | 配置项 | 说明 |
 |--------|------|
 | `hooks.enabled` | 启用 webhook 接口 |
-| `hooks.allowRequestSessionKey` | 允许每个群聊独立 Session |
-| `hooks.allowedSessionKeyPrefixes` | 只接受 `hook:imclaw:` 开头的 sessionKey |
+| `hooks.token` | Hooks 认证 Token |
 | `session.reset.idleMinutes` | Session 24小时无活动才重置（默认几分钟） |
 | `session.maintenance.maxEntries` | 最多保留 2000 个 session（默认 500） |
 | `session.maintenance.pruneAfter` | 90天不活动才清理（默认 30天） |
@@ -368,7 +367,7 @@ echo "✅ 消息处理协议已配置"
 hooks 和 session 已正确配置，跳过此步骤。直接验证即可：
 
 ```bash
-jq '.hooks.enabled, .hooks.allowRequestSessionKey, .session.reset.idleMinutes' ~/.openclaw/openclaw.json
+jq '.hooks.enabled, .hooks.token, .session.reset.idleMinutes' ~/.openclaw/openclaw.json
 ```
 
 #### 情况 B：需要配置（使用 `gateway` tool 优雅重启，推荐）
@@ -382,7 +381,7 @@ Agent 应调用 `gateway` tool，参数如下：
 ```json
 {
   "action": "config.patch",
-  "raw": "{\"hooks\":{\"enabled\":true,\"path\":\"/hooks\",\"token\":\"<步骤3的HOOKS_TOKEN>\",\"allowRequestSessionKey\":true,\"allowedSessionKeyPrefixes\":[\"hook:imclaw:\"],\"defaultSessionKey\":\"hook:imclaw:default\"},\"session\":{\"reset\":{\"mode\":\"idle\",\"idleMinutes\":1440},\"maintenance\":{\"mode\":\"enforce\",\"pruneAfter\":\"90d\",\"maxEntries\":2000}}}",
+  "raw": "{\"hooks\":{\"enabled\":true,\"path\":\"/hooks\",\"token\":\"<步骤3的HOOKS_TOKEN>\"},\"session\":{\"reset\":{\"mode\":\"idle\",\"idleMinutes\":1440},\"maintenance\":{\"mode\":\"enforce\",\"pruneAfter\":\"90d\",\"maxEntries\":2000}}}",
   "note": "IMClaw skill 配置完成！Hooks 和 Session 已生效，连接进程已在后台运行。",
   "restartDelayMs": 3000
 }
@@ -394,10 +393,7 @@ Agent 应调用 `gateway` tool，参数如下：
   "hooks": {
     "enabled": true,
     "path": "/hooks",
-    "token": "<步骤 3 中生成的 HOOKS_TOKEN>",
-    "allowRequestSessionKey": true,
-    "allowedSessionKeyPrefixes": ["hook:imclaw:"],
-    "defaultSessionKey": "hook:imclaw:default"
+    "token": "<步骤 3 中生成的 HOOKS_TOKEN>"
   },
   "session": {
     "reset": {
@@ -432,10 +428,7 @@ hooks_token = config.get("hooks", {}).get("token") or secrets.token_urlsafe(32)
 config["hooks"] = {
     "enabled": True,
     "path": "/hooks",
-    "token": hooks_token,
-    "allowRequestSessionKey": True,
-    "allowedSessionKeyPrefixes": ["hook:imclaw:"],
-    "defaultSessionKey": "hook:imclaw:default"
+    "token": hooks_token
 }
 if "session" not in config:
     config["session"] = {}
@@ -466,7 +459,7 @@ openclaw restart
 **验证（所有情况）：**
 ```bash
 jq '.hooks.enabled' ~/.openclaw/openclaw.json          # 应返回 true
-jq '.hooks.allowRequestSessionKey' ~/.openclaw/openclaw.json  # 应返回 true
+jq '.hooks.token' ~/.openclaw/openclaw.json            # 应返回非空字符串
 jq '.session.reset.idleMinutes' ~/.openclaw/openclaw.json     # 应返回 1440
 ```
 
@@ -901,7 +894,7 @@ import json; from pathlib import Path
 c = json.loads(Path('$OPENCLAW_CONFIG').read_text()) if Path('$OPENCLAW_CONFIG').exists() else {}
 h = c.get('hooks', {})
 s = c.get('session', {}).get('reset', {})
-hooks_ok = h.get('enabled') and h.get('allowRequestSessionKey') and 'hook:imclaw:' in (h.get('allowedSessionKeyPrefixes') or [])
+hooks_ok = h.get('enabled') and h.get('token')
 session_ok = s.get('idleMinutes', 0) >= 1440
 print('no' if hooks_ok and session_ok else 'yes')
 ")
@@ -919,10 +912,7 @@ config_path = Path("$OPENCLAW_CONFIG")
 config_path.parent.mkdir(parents=True, exist_ok=True)
 config = json.loads(config_path.read_text()) if config_path.exists() else {}
 config["hooks"] = {
-    "enabled": True, "path": "/hooks", "token": "$HOOKS_TOKEN",
-    "allowRequestSessionKey": True,
-    "allowedSessionKeyPrefixes": ["hook:imclaw:"],
-    "defaultSessionKey": "hook:imclaw:default"
+    "enabled": True, "path": "/hooks", "token": "$HOOKS_TOKEN"
 }
 if "session" not in config: config["session"] = {}
 config["session"]["reset"] = {"mode": "idle", "idleMinutes": 1440}

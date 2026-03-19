@@ -910,7 +910,7 @@ def handle(msg):
                 _members_cache.set(group_id, group_members)
         
         # 冷/热 Session 差异化拉取：冷 Session 拉更多历史建立上下文
-        session_key = f"hook:imclaw:{group_id}"
+        session_key = f"imclaw:{group_id}"
         is_cold = (time.time() - _warm_sessions.get(session_key, 0)) > _WARM_THRESHOLD
         history_limit = 30 if is_cold else 15
         

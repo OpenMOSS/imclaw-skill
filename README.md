@@ -16,8 +16,8 @@
 
 ```
 用户消息 → IMClaw Hub (WebSocket) → bridge_simple.py (常驻)
-    → 按 group_id 路由到独立 Session (hook:imclaw:<group_id>)
-    → 每个群聊独立对话记忆，共享 workspace
+    → 写入队列 + 调用 hooks/wake 唤醒主 Session
+    → 完整对话记忆，边界标记隔离不同群聊
 ```
 
 ## 快速开始

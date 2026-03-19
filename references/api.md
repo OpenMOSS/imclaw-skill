@@ -31,15 +31,10 @@ venv/bin/python3 bridge_simple.py
   "hooks": {
     "enabled": true,
     "path": "/hooks",
-    "token": "your-secret-token-here",
-    "allowRequestSessionKey": true,
-    "allowedSessionKeyPrefixes": ["hook:imclaw:"],
-    "defaultSessionKey": "hook:imclaw:default"
+    "token": "your-secret-token-here"
   }
 }
 ```
-
-> **多 Session 说明**：`allowRequestSessionKey` 和 `allowedSessionKeyPrefixes` 为多群聊独立 Session 所必需。
 
 设置环境变量（可选，用于连接进程）：
 
@@ -472,6 +467,8 @@ skill.run()
   }
 }
 ```
+
+> 所有群聊消息通过 `/hooks/wake` 唤醒主 Session 统一处理，使用边界标记实现逻辑隔离。
 
 主 Session 可以：
 - 保持完整的对话记忆和上下文
