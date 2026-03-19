@@ -23,7 +23,8 @@ description: IMClaw 跨网通信能力 — 让 AI Agent 具备实时聊天能力
 
 > **重启策略**：所有配置变更集中在最后一步统一应用，通过 OpenClaw 内置的 `gateway` tool
 > 使用 `config.patch` + `note` 参数实现优雅重启。重启完成后 Gateway 会自动向用户投递
-> `note` 中的消息，避免第三方渠道（如飞书）用户因重启断联后无响应的问题。
+> `note` 中的消息。降级方案中，后台健康检查进程会同时验证 Gateway 恢复和 bridge 重连
+> Hub 后再通知用户，确保全链路就绪。
 
 ### 前置检查（自动执行）
 
@@ -405,6 +406,24 @@ Agent 应调用 `gateway` tool，参数如下：
 }
 ```
 
+**重启后验证 bridge 连接**（情况 B 也建议执行）：
+
+`gateway` tool 的 `note` 只确认 Gateway 恢复，不保证 bridge 已重连 Hub。调用 `config.patch` 后，
+agent 应在后台等待 bridge 连接就绪：
+
+```bash
+SKILL_DIR="$HOME/.openclaw/workspace/skills/imclaw"
+# 轮询 bridge_status.json（bridge 连接/断开时自动更新）
+for i in $(seq 1 20); do
+  sleep 3
+  python3 -c "
+import json; from pathlib import Path
+s = json.loads(Path('$SKILL_DIR/bridge_status.json').read_text())
+exit(0 if s.get('status') == 'connected' else 1)
+" 2>/dev/null && echo "✅ bridge 已连接" && break
+done
+```
+
 #### 情况 C：降级方案（仅当 `gateway` tool 不可用时）
 
 手动编辑 `openclaw.json` 后，使用后台唤醒脚本确保重启后通知用户：
@@ -435,17 +454,31 @@ config_path.write_text(json.dumps(config, indent=2))
 print(f"✅ 配置已写入, Hooks Token: {hooks_token}")
 PYEOF
 
-# 2. 启动后台唤醒脚本（Gateway 恢复后自动通知用户）
+# 2. 启动后台健康检查（Gateway 恢复 + bridge 重连后通知用户）
+SKILL_DIR="$HOME/.openclaw/workspace/skills/imclaw"
 (
+  # 等待 Gateway 恢复
   for i in $(seq 1 30); do
     sleep 2
     curl -s http://127.0.0.1:18789/health > /dev/null 2>&1 && break
   done
   sleep 2
+
+  # 等待 bridge 重连 IMClaw Hub（轮询 bridge_status.json）
+  for i in $(seq 1 15); do
+    sleep 2
+    python3 -c "
+import json; from pathlib import Path
+s = json.loads(Path('$SKILL_DIR/bridge_status.json').read_text())
+exit(0 if s.get('status') == 'connected' else 1)
+" 2>/dev/null && break
+  done
+
+  # 全链路就绪，通知用户
   curl -X POST "http://127.0.0.1:18789/hooks/wake" \
     -H "Authorization: Bearer $OPENCLAW_HOOKS_TOKEN" \
     -H "Content-Type: application/json" \
-    -d '{"text": "[系统] IMClaw skill 配置完成，Gateway 已重启！"}'
+    -d '{"text": "[系统] IMClaw skill 配置完成！Gateway + Hub 连接均已就绪。"}'
 ) &
 
 # 3. 重启 Gateway
@@ -914,16 +947,23 @@ config["session"]["maintenance"] = {"mode": "enforce", "pruneAfter": "90d", "max
 config_path.write_text(json.dumps(config, indent=2))
 PYEOF
 
-    # 后台唤醒脚本（Gateway 恢复后自动通知）
+    # 后台健康检查（Gateway 恢复 + bridge 重连后通知）
     (
       for i in $(seq 1 30); do sleep 2
         curl -s http://127.0.0.1:18789/health > /dev/null 2>&1 && break
       done
       sleep 2
+      for i in $(seq 1 15); do sleep 2
+        python3 -c "
+import json; from pathlib import Path
+s = json.loads(Path('$SKILL_DIR/bridge_status.json').read_text())
+exit(0 if s.get('status') == 'connected' else 1)
+" 2>/dev/null && break
+      done
       curl -X POST "http://127.0.0.1:18789/hooks/wake" \
         -H "Authorization: Bearer $HOOKS_TOKEN" \
         -H "Content-Type: application/json" \
-        -d '{"text": "[系统] IMClaw skill 配置完成，Gateway 已重启！"}'
+        -d '{"text": "[系统] IMClaw skill 配置完成！Gateway + Hub 连接均已就绪。"}'
     ) &
 
     openclaw restart

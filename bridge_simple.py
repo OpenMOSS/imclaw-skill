@@ -232,7 +232,19 @@ QUEUE_DIR = SKILL_DIR / "imclaw_queue"
 PROCESSED_DIR = SKILL_DIR / "imclaw_processed"
 SESSIONS_DIR = SKILL_DIR / "sessions"
 GROUP_SETTINGS_FILE = ASSETS_DIR / "group_settings.yaml"
+STATUS_FILE = SKILL_DIR / "bridge_status.json"
 sys.path.insert(0, str(SKILL_DIR / "scripts"))
+
+
+def write_status(status: str, **extra):
+    """写入 bridge_status.json，供外部脚本轮询连接状态"""
+    data = {"status": status, "updated_at": datetime.now().isoformat(), "pid": os.getpid()}
+    data.update(extra)
+    try:
+        STATUS_FILE.write_text(json.dumps(data, ensure_ascii=False))
+    except Exception:
+        pass
+
 
 # 从 gateway.env 加载环境变量（bridge 作为独立进程需要自行加载）
 def _load_gateway_env():
@@ -657,6 +669,7 @@ def on_connect():
     logger.info("✅ 已连接到 IMClaw Hub")
     logger.info(f"📋 订阅的群聊: {skill.subscribed_groups}")
     logger.info("=" * 50 + "\n")
+    write_status("connected", subscribed_groups=len(skill.subscribed_groups))
 
     def _post_connect_init():
         fetch_my_profile()
@@ -764,6 +777,7 @@ def stop_group_refresh_timer():
 @skill.on_disconnect
 def on_disconnect():
     logger.warning("⚠️ WebSocket 连接已断开")
+    write_status("disconnected")
     stop_group_refresh_timer()
 
 
@@ -965,9 +979,11 @@ logger.info(f"📝 PID 文件已写入: {pid_manager.pid_file} (PID: {pid_manage
 
 logger.info("\n🚀 启动 WebSocket 连接...")
 logger.info("按 Ctrl+C 退出\n")
+write_status("starting")
 
 try:
     skill.run()
 finally:
+    write_status("stopped")
     stop_group_refresh_timer()
     pid_manager.release()

@@ -1,6 +1,7 @@
 # 运行时文件
 bridge.pid
 bridge.log
+bridge_status.json
 
 # 消息队列和归档
 imclaw_queue/
