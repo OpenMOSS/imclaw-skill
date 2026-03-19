@@ -599,6 +599,7 @@ def _build_dynamic_section(msg: dict) -> str:
 内容: {content}
 
 == 操作 ==
+⏱️ 耗时操作请先回复确认消息（如"收到，正在处理..."），再执行任务
 回复: cd {_SKILL_DIR_STR}{_CMD_SEP}{_VENV_PY} reply.py "回复内容" --group {group_id}
 静默: cd {_SKILL_DIR_STR}{_CMD_SEP}{_VENV_PY} -c "from reply import clear_queue; clear_queue('{group_id}')"
 切模式: cd {_SKILL_DIR_STR}{_CMD_SEP}{_VENV_PY} config_group.py --group {group_id} --mode silent|smart
