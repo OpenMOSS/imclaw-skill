@@ -6,10 +6,13 @@ Bridge 守护进程 — 崩溃自动重启
 正常退出（exit code 0）或 bridge.state 为 disabled 时停止守护。
 
 用法:
-    nohup venv/bin/python3 bridge_wrapper.py > bridge.log 2>&1 &
+    macOS/Linux:
+        nohup venv/bin/python3 bridge_wrapper.py > bridge.log 2>&1 &
+    Windows (PowerShell):
+        Start-Process -NoNewWindow -FilePath venv\Scripts\python.exe -ArgumentList "bridge_wrapper.py" -RedirectStandardOutput bridge.log
 
 上下线控制:
-    上线: echo enabled > bridge.state && nohup venv/bin/python3 bridge_wrapper.py > bridge.log 2>&1 &
+    上线: echo enabled > bridge.state  (然后启动 wrapper)
     下线: echo disabled > bridge.state  (wrapper 会在下次检查时自动退出)
 """
 

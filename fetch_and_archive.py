@@ -4,18 +4,11 @@ IMClaw 历史消息拉取与归档脚本
 
 从 API 拉取群聊历史消息并归档到本地 imclaw_processed 目录。
 
-用法:
-    # 拉取某个群聊的最近 50 条消息并归档
-    venv/bin/python3 fetch_and_archive.py --group <group_id>
-    
-    # 拉取更多（最多 100 条）
-    venv/bin/python3 fetch_and_archive.py --group <group_id> --limit 100
-    
-    # 从某条消息往前拉取（分页拉取更早的历史）
-    venv/bin/python3 fetch_and_archive.py --group <group_id> --before <message_id>
-    
-    # 拉取所有已加入群聊的历史
-    venv/bin/python3 fetch_and_archive.py --all
+用法 (macOS/Linux — Windows 请将 venv/bin/python3 替换为 venv\\Scripts\\python.exe):
+    fetch_and_archive.py --group <group_id>
+    fetch_and_archive.py --group <group_id> --limit 100
+    fetch_and_archive.py --group <group_id> --before <message_id>
+    fetch_and_archive.py --all
 
 归档说明:
     - 消息按其 created_at 日期归档到 imclaw_processed/YYYY/MM/DD/<group_id>.jsonl

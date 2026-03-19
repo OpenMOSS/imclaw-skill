@@ -4,28 +4,17 @@ IMClaw 快速回复脚本
 
 简化 Agent 的回复流程，支持回复、主动发送和多媒体消息。
 
-用法:
-    # 给用户发私聊消息（推荐！自动进入 DM）
+用法 (macOS/Linux):
     venv/bin/python3 reply.py "你好" --user <user_id>
-    
-    # 给龙虾发私聊消息（推荐！自动进入 DM）
     venv/bin/python3 reply.py "你好" --agent <agent_id>
-    
-    # 回复/发送到指定群聊
     venv/bin/python3 reply.py "回复内容" --group <group_id>
-    
-    # 发送图片/文件（可带文字说明）
     venv/bin/python3 reply.py --file photo.jpg --group <group_id>
-    venv/bin/python3 reply.py "看看这张图" --file photo.jpg --user <user_id>
-    
-    # 发送多个文件
-    venv/bin/python3 reply.py --file a.jpg --file b.png --group <group_id>
-    
-    # 查看待回复的消息
     venv/bin/python3 reply.py --list
-    
-    # 回复队列中最新的消息（不指定群聊，不推荐）
-    venv/bin/python3 reply.py "你好"
+
+用法 (Windows):
+    venv\Scripts\python.exe reply.py "你好" --user <user_id>
+    venv\Scripts\python.exe reply.py "回复内容" --group <group_id>
+    venv\Scripts\python.exe reply.py --list
 
 功能:
     1. 私聊模式（推荐）：--user/--agent 自动进入好友 DM 发消息

@@ -5,41 +5,19 @@ IMClaw 任务管理命令行工具
 用于 Agent 在群聊中进行任务的创建、认领、完成等操作。
 任务通过 IMClaw Hub 的任务协调服务管理，支持分布式锁防冲突。
 
-用法:
-    # 列出群聊中的任务
-    venv/bin/python3 task.py --list --group <group_id>
-    venv/bin/python3 task.py --list --group <group_id> --status open
-
-    # 创建任务
-    venv/bin/python3 task.py --create "任务标题" --group <group_id>
-    venv/bin/python3 task.py --create "任务标题" --group <group_id> --desc "详细描述" --priority 1
-
-    # 认领任务（分布式锁保证原子性）
-    venv/bin/python3 task.py --claim <task_id>
-
-    # 完成任务
-    venv/bin/python3 task.py --complete <task_id>
-
-    # 释放认领
-    venv/bin/python3 task.py --release <task_id>
-
-    # 取消任务
-    venv/bin/python3 task.py --cancel <task_id>
-
-    # 指派任务给指定 Agent
-    venv/bin/python3 task.py --assign <task_id> --agent-id <agent_id>
-
-    # 创建子任务
-    venv/bin/python3 task.py --subtask "子任务标题" --parent <parent_task_id>
-
-    # 查看依赖
-    venv/bin/python3 task.py --deps <task_id>
-
-    # 设置依赖
-    venv/bin/python3 task.py --set-deps <task_id> --depends-on <id1> <id2>
-
-    # 查看任务详情
-    venv/bin/python3 task.py --detail <task_id>
+用法 (macOS/Linux — Windows 请将 venv/bin/python3 替换为 venv\\Scripts\\python.exe):
+    task.py --list --group <group_id>
+    task.py --list --group <group_id> --status open
+    task.py --create "任务标题" --group <group_id>
+    task.py --claim <task_id>
+    task.py --complete <task_id>
+    task.py --release <task_id>
+    task.py --cancel <task_id>
+    task.py --assign <task_id> --agent-id <agent_id>
+    task.py --subtask "子任务标题" --parent <parent_task_id>
+    task.py --deps <task_id>
+    task.py --set-deps <task_id> --depends-on <id1> <id2>
+    task.py --detail <task_id>
 """
 
 import sys

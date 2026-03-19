@@ -34,15 +34,28 @@ echo 'IMCLAW_TOKEN=你的Token' >> ~/.openclaw/gateway.env
 
 ### 3. 安装依赖
 
+**macOS/Linux:**
 ```bash
 python3 -m venv venv
 venv/bin/pip install -r scripts/requirements.txt
 ```
 
+**Windows (PowerShell):**
+```powershell
+python -m venv venv
+venv\Scripts\pip install -r scripts\requirements.txt
+```
+
 ### 4. 启动
 
+**macOS/Linux:**
 ```bash
 venv/bin/python3 bridge_simple.py
+```
+
+**Windows (PowerShell):**
+```powershell
+venv\Scripts\python.exe bridge_simple.py
 ```
 
 ## Python SDK
@@ -52,7 +65,7 @@ venv/bin/python3 bridge_simple.py
 ```python
 from imclaw_skill import IMClawSkill
 
-skill = IMClawSkill.from_config("config.yaml")
+skill = IMClawSkill.from_env()
 
 @skill.on_message
 def handle(msg):

@@ -840,6 +840,7 @@ venv/bin/pip install requests websocket-client pyyaml
 3. **自动重连**：连接进程支持断线自动重连（指数退避）
 4. **实时性**：hooks/wake 毫秒级延迟唤醒主会话
 5. **路径自动检测**：`bridge_simple.py` 会自动检测 skill 目录，无需手动修改路径
+6. **跨平台**：支持 macOS / Linux / Windows。Windows 上使用 `venv\Scripts\python.exe` 替代 `venv/bin/python3`，检活脚本使用 `check_bridge.ps1` 替代 `check_bridge.sh`
 
 ## 完整配置一键脚本
 

@@ -44,22 +44,54 @@ class PIDManager:
         self._registered = False
         self._shutdown_requested = False
     
+    @staticmethod
+    def _is_pid_alive(pid: int) -> bool:
+        """检测进程是否存活（跨平台）"""
+        if sys.platform == "win32":
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            handle = kernel32.OpenProcess(0x1000, 0, pid)
+            if handle:
+                kernel32.CloseHandle(handle)
+                return True
+            return False
+        else:
+            try:
+                os.kill(pid, 0)
+                return True
+            except (ProcessLookupError, PermissionError):
+                return False
+
     def _find_other_instances(self) -> list[int]:
         """查找其他同名进程（排除自己）"""
         other_pids = []
         try:
             import subprocess
-            result = subprocess.run(
-                ["pgrep", "-f", self.process_name],
-                capture_output=True,
-                text=True
-            )
-            if result.returncode == 0:
-                for line in result.stdout.strip().split('\n'):
-                    if line:
-                        pid = int(line)
-                        if pid != self.pid:
-                            other_pids.append(pid)
+            if sys.platform == "win32":
+                result = subprocess.run(
+                    ["wmic", "process", "where",
+                     f"CommandLine like '%{self.process_name}%'",
+                     "get", "ProcessId"],
+                    capture_output=True, text=True
+                )
+                if result.returncode == 0:
+                    for line in result.stdout.strip().split('\n'):
+                        line = line.strip()
+                        if line.isdigit():
+                            pid = int(line)
+                            if pid != self.pid:
+                                other_pids.append(pid)
+            else:
+                result = subprocess.run(
+                    ["pgrep", "-f", self.process_name],
+                    capture_output=True, text=True
+                )
+                if result.returncode == 0:
+                    for line in result.stdout.strip().split('\n'):
+                        if line:
+                            pid = int(line)
+                            if pid != self.pid:
+                                other_pids.append(pid)
         except Exception:
             pass
         return other_pids
@@ -71,10 +103,9 @@ class PIDManager:
         if self.pid_file.exists():
             try:
                 old_pid = int(self.pid_file.read_text().strip())
-                if old_pid != self.pid:
-                    os.kill(old_pid, 0)
+                if old_pid != self.pid and self._is_pid_alive(old_pid):
                     running_pids.append(old_pid)
-            except (ValueError, ProcessLookupError, PermissionError):
+            except (ValueError, OSError):
                 pass
         
         other_pids = self._find_other_instances()
@@ -90,7 +121,10 @@ class PIDManager:
         
         if running and not force:
             logger.warning(f"⚠️ 已有 {len(running_pids)} 个实例运行中: {running_pids}")
-            logger.info(f"   请先停止旧进程: pkill -f {self.process_name}")
+            if sys.platform == "win32":
+                logger.info(f"   请先停止旧进程: taskkill /F /PID {running_pids[0]}")
+            else:
+                logger.info(f"   请先停止旧进程: pkill -f {self.process_name}")
             logger.info(f"   或使用 --force 参数强制启动")
             return False
         
@@ -101,8 +135,9 @@ class PIDManager:
         
         if not self._registered:
             atexit.register(self.release)
-            signal.signal(signal.SIGTERM, self._signal_handler)
             signal.signal(signal.SIGINT, self._signal_handler)
+            if hasattr(signal, "SIGTERM"):
+                signal.signal(signal.SIGTERM, self._signal_handler)
             self._registered = True
         
         return True
@@ -485,7 +520,14 @@ def get_queue_count(group_id: str = None) -> int:
 _warm_sessions = {}  # {session_key: last_wake_time}
 _WARM_THRESHOLD = 3600  # 1小时内视为热 Session
 
-_SKILL_DIR_STR = "~/.openclaw/workspace/skills/imclaw"
+if sys.platform == "win32":
+    _SKILL_DIR_STR = "%USERPROFILE%\\.openclaw\\workspace\\skills\\imclaw"
+    _VENV_PY = "venv\\Scripts\\python.exe"
+    _CMD_SEP = " && "
+else:
+    _SKILL_DIR_STR = "~/.openclaw/workspace/skills/imclaw"
+    _VENV_PY = "venv/bin/python3"
+    _CMD_SEP = " && "
 _RULES_PATH = f"{_SKILL_DIR_STR}/references/session_rules.md"
 
 
@@ -529,9 +571,9 @@ def _build_dynamic_section(msg: dict) -> str:
 内容: {content}
 
 == 操作 ==
-回复: cd {_SKILL_DIR_STR} && venv/bin/python3 reply.py "回复内容" --group {group_id}
-静默: cd {_SKILL_DIR_STR} && venv/bin/python3 -c "from reply import clear_queue; clear_queue('{group_id}')"
-切模式: cd {_SKILL_DIR_STR} && venv/bin/python3 config_group.py --group {group_id} --mode silent|smart"""
+回复: cd {_SKILL_DIR_STR}{_CMD_SEP}{_VENV_PY} reply.py "回复内容" --group {group_id}
+静默: cd {_SKILL_DIR_STR}{_CMD_SEP}{_VENV_PY} -c "from reply import clear_queue; clear_queue('{group_id}')"
+切模式: cd {_SKILL_DIR_STR}{_CMD_SEP}{_VENV_PY} config_group.py --group {group_id} --mode silent|smart"""
 
 
 def wake_session_for_group(msg: dict):
