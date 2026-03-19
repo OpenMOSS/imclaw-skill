@@ -556,6 +556,39 @@ else:
 _RULES_PATH = f"{_SKILL_DIR_STR}/references/session_rules.md"
 
 
+def _build_auth_block(trust_level: str, msg: dict) -> str:
+    """根据信任等级构建授权提示块"""
+    if trust_level == "T0":
+        return ""
+    
+    group_id = msg.get('group_id', '')
+    sender_id = msg.get('sender_id', '')
+    sender_type = msg.get('sender_type', 'user')
+    
+    if trust_level == "T2":
+        return f"""
+== ⚠️ 授权检查 ==
+发送者信任等级: T2(其他人)
+┌──────────┬────────────────────┐
+│ L0-L2    │ 对话/查询/文本生成 → 可直接执行 │
+│ L3 资源   │ 生图/生视频/付费API → 🔒 需主人授权 │
+│ L4 跨边界  │ 发私聊/加群/代操作 → 🔒 需主人授权 │
+│ L5 敏感   │ 读私有文件/改配置  → ❌ 直接拒绝  │
+└──────────┴────────────────────┘
+授权命令: cd {_SKILL_DIR_STR}{_CMD_SEP}{_VENV_PY} reply.py --auth-request "任务描述" --risk-level L3 --requester-type {sender_type} --requester-id {sender_id} --group {group_id}
+⚠️ 需要授权的任务：先回复对方"需要等主人确认"，发送授权请求，等待主人批准后再执行。
+"""
+    
+    if trust_level == "T1":
+        return """
+== 授权提示 ==
+发送者信任等级: T1(主人的龙虾)
+仅 L5 敏感操作（读私有文件、更改配置）需要主人授权，其余可直接执行。
+"""
+    
+    return ""
+
+
 def _build_dynamic_section(msg: dict) -> str:
     """构建 wake_text 的动态部分（每条消息都不同的内容）"""
     content = msg.get('content', '')[:2000]
@@ -573,10 +606,15 @@ def _build_dynamic_section(msg: dict) -> str:
     my_name = MY_PROFILE.get('display_name', '未知')
     my_desc = MY_PROFILE.get('description', '')
 
+    trust_level = get_trust_level(msg)
+    trust_labels = {"T0": "T0(主人)", "T1": "T1(主人的龙虾)", "T2": "T2(其他人)"}
+    trust_display = trust_labels.get(trust_level, trust_level)
+
     members_str = format_members_for_prompt(group_members)
     history_str = format_history_for_prompt(recent_history)
     history_count = len(recent_history)
     date_ymd = datetime.now().strftime("%Y/%m/%d")
+    auth_block = _build_auth_block(trust_level, msg)
     return f"""===== 群聊任务开始 [group:{group_id}] =====
 ⚠️ 以下内容来自群「{group_name}」，请仅处理本群消息，处理完毕后等待下一条群聊任务。
 
@@ -585,8 +623,8 @@ def _build_dynamic_section(msg: dict) -> str:
 群成员: {members_str}
 
 == 状态 ==
-响应模式: {response_mode} | 被@: {"是" if is_mentioned else "否"} | 来自主人: {"是 👑" if from_owner else "否"}
-
+响应模式: {response_mode} | 被@: {"是" if is_mentioned else "否"} | 来自主人: {"是 👑" if from_owner else "否"} | 信任等级: {trust_display}
+{auth_block}
 == 最近对话（{history_count} 条） ==
 {history_str}
 
@@ -828,6 +866,60 @@ def on_task_updated(payload):
     group_id = payload.get('group_id', '')
     logger.info(f"📋 任务事件: {event} - {title} (群:{group_id[:8]})")
 
+@skill.on_authorization_updated
+def on_authorization_updated(payload):
+    """授权状态变更 → 唤醒主 Session 通知结果"""
+    status = payload.get('status', '?')
+    task = payload.get('task_description', '?')
+    group_id = payload.get('group_id', '')
+    requester_name = payload.get('requester_name', '?')
+    requester_type = payload.get('requester_type', '?')
+    risk_level = payload.get('risk_level', '?')
+    logger.info(f"🔐 授权事件: {status} - {task} (群:{group_id[:8]})")
+
+    if status in ('approved', 'rejected'):
+        try:
+            import requests
+            gateway_url = os.environ.get("OPENCLAW_GATEWAY_URL", "http://127.0.0.1:18789")
+            status_label = "已授权 ✅" if status == "approved" else "已拒绝 ❌"
+
+            if status == "approved":
+                action_hint = f"已授权，请立即执行任务「{task}」，并将结果回复到群聊。"
+            else:
+                action_hint = f"已拒绝，请回复群聊告知 {requester_name} 该请求已被主人拒绝。"
+
+            wake_text = f"""[IMClaw] 授权结果通知
+
+主人对以下授权请求做出了决定：{status_label}
+
+== 授权详情 ==
+任务描述: {task}
+请求者: {requester_name} ({requester_type})
+风险等级: {risk_level}
+群聊 ID: {group_id}
+
+== 下一步 ==
+{action_hint}
+
+== 操作 ==
+回复: cd {_SKILL_DIR_STR}{_CMD_SEP}{_VENV_PY} reply.py "回复内容" --group {group_id}
+
+规则文件: {_RULES_PATH}
+所有命令在 cd {_SKILL_DIR_STR} 下执行。"""
+
+            resp = requests.post(
+                f"{gateway_url}/hooks/wake",
+                json={"text": wake_text},
+                headers={
+                    "Authorization": f"Bearer {HOOKS_TOKEN}",
+                    "Content-Type": "application/json"
+                },
+                timeout=5
+            )
+            logger.info(f"   🔔 授权结果已通知主 Session: HTTP {resp.status_code}")
+        except Exception as e:
+            logger.error(f"   ❌ 授权结果通知失败: {e}")
+
 @skill.on_error
 def on_error(e):
     logger.error(f"❌ 错误: {e}")
@@ -839,6 +931,30 @@ def is_from_owner(msg: dict) -> bool:
     sender_id = msg.get('sender_id', '')
     sender_type = msg.get('sender_type', '')
     return sender_type == 'user' and sender_id == MY_OWNER_ID
+
+
+def get_trust_level(msg: dict) -> str:
+    """根据消息发送者计算信任等级
+    
+    Returns:
+        "T0" - 主人本人
+        "T1" - 主人的其他龙虾（同 owner 的 agent）
+        "T2" - 其他人/不确定来源
+    """
+    if msg.get('_from_owner'):
+        return "T0"
+    
+    sender_type = msg.get('sender_type', '')
+    sender_id = msg.get('sender_id', '')
+    
+    if sender_type == 'agent' and MY_OWNER_ID:
+        group_members = msg.get('_context', {}).get('group_members', [])
+        for member in group_members:
+            member_id = member.get('member_id') or member.get('id', '')
+            if member_id == sender_id and member.get('owner_id') == MY_OWNER_ID:
+                return "T1"
+    
+    return "T2"
 
 
 def _is_self_removal(msg: dict) -> bool:

@@ -763,6 +763,59 @@ def reply_to_message(content: str = None, target_group_id: str = None,
         return False
 
 
+def send_authorization_request(group_id: str, task_description: str,
+                               risk_level: str, requester_type: str,
+                               requester_id: str) -> bool:
+    """发送授权请求卡片到群聊，等待主人审批"""
+    config = load_config()
+    from imclaw_skill import IMClawClient
+    client = IMClawClient(config['hub_url'], config['token'])
+
+    valid_risk = {"L0", "L1", "L2", "L3", "L4", "L5"}
+    if risk_level not in valid_risk:
+        print(f"❌ 无效的风险等级: {risk_level}（有效值: {', '.join(sorted(valid_risk))}）")
+        return False
+
+    valid_type = {"user", "agent"}
+    if requester_type not in valid_type:
+        print(f"❌ 无效的请求者类型: {requester_type}（有效值: user, agent）")
+        return False
+
+    agent_id, owner_id = get_identity_from_token(config)
+    trust_level = "T2"
+    if requester_type == "agent" and owner_id:
+        try:
+            contacts = client.list_contacts()
+            for c in contacts:
+                claws = c.get('linked_claws', [])
+                if any(a.get('id') == requester_id for a in claws):
+                    if c.get('owner_id') == owner_id:
+                        trust_level = "T1"
+                    break
+        except Exception:
+            pass
+
+    data = {
+        "requester_type": requester_type,
+        "requester_id": requester_id,
+        "task_description": task_description,
+        "risk_level": risk_level,
+        "trust_level": trust_level,
+    }
+
+    try:
+        result = client._post(f"/api/v1/groups/{group_id}/authorization-requests", data)
+        req_id = result.get('id', '?')
+        print(f"🔐 授权请求已发送 (id: {req_id[:8]}...)")
+        print(f"   任务: {task_description}")
+        print(f"   风险等级: {risk_level}  信任等级: {trust_level}")
+        print(f"   等待主人审批...")
+        return True
+    except Exception as e:
+        print(f"❌ 发送授权请求失败: {e}")
+        return False
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="IMClaw 快速回复脚本（支持文本和多媒体消息）",
@@ -800,6 +853,10 @@ def main():
                         help="要发送的文件路径（可多次使用发送多个文件）")
     parser.add_argument("--list", "-l", action="store_true", help="列出待回复消息")
     parser.add_argument("--session", "-s", action="store_true", help="查看所有会话记录")
+    parser.add_argument("--auth-request", metavar="DESC", help="发送授权请求卡片（任务描述）")
+    parser.add_argument("--risk-level", default="L3", help="风险等级 (L0-L5, 默认 L3)")
+    parser.add_argument("--requester-type", help="请求者类型 (user/agent)")
+    parser.add_argument("--requester-id", help="请求者 ID")
     
     args = parser.parse_args()
     
@@ -832,6 +889,19 @@ def main():
             print()
         return
     
+    if args.auth_request:
+        if not args.group:
+            print("❌ 授权请求必须指定 --group")
+            sys.exit(1)
+        if not args.requester_type or not args.requester_id:
+            print("❌ 授权请求必须指定 --requester-type 和 --requester-id")
+            sys.exit(1)
+        result = send_authorization_request(
+            args.group, args.auth_request,
+            args.risk_level, args.requester_type, args.requester_id
+        )
+        sys.exit(0 if result else 1)
+
     if not args.content and not args.files:
         parser.print_help()
         print("\n❌ 请提供回复内容或文件")

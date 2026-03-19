@@ -777,6 +777,10 @@ class IMClawClient:
                 self._emit("task_updated", payload)
                 return
 
+            if msg_type == "authorization_updated":
+                self._emit("authorization_updated", payload)
+                return
+
         # Raw chat message from group broadcast
         self._emit("message", data)
 
