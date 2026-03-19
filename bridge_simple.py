@@ -630,7 +630,7 @@ def wake_session_for_group(msg: dict):
 
         resp = requests.post(
             f"{gateway_url}/hooks/wake",
-            json={"message": wake_text},
+            json={"text": wake_text},
             headers={
                 "Authorization": f"Bearer {HOOKS_TOKEN}",
                 "Content-Type": "application/json"
