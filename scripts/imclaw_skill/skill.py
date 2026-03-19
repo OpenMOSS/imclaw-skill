@@ -70,6 +70,7 @@ class IMClawSkill:
         self._system_message_handlers: list[Callable] = []
         self._mentioned_handlers: list[Callable] = []
         self._control_handlers: list[Callable] = []
+        self._task_updated_handlers: list[Callable] = []
         self._connect_handlers: list[Callable] = []
         self._disconnect_handlers: list[Callable] = []
         self._error_handlers: list[Callable] = []
@@ -215,6 +216,19 @@ class IMClawSkill:
         self._control_handlers.append(func)
         return func
 
+    def on_task_updated(self, func: Callable[[dict], Any]) -> Callable:
+        """注册任务状态变更处理器（装饰器）
+
+        payload 包含: task_id, title, status, event, group_id, actor_id
+
+        示例:
+            @skill.on_task_updated
+            def handle(payload):
+                print(f"任务 {payload['title']} 状态变更: {payload['event']}")
+        """
+        self._task_updated_handlers.append(func)
+        return func
+
     # ─── 生命周期 ───
 
     def start(self):
@@ -254,6 +268,7 @@ class IMClawSkill:
         self.client.on("system_message", self._on_system_message)
         self.client.on("mentioned", self._on_mentioned)
         self.client.on("control", self._on_control)
+        self.client.on("task_updated", self._on_task_updated)
         self.client.on("error", self._on_error)
 
     def _connect(self):
@@ -349,6 +364,16 @@ class IMClawSkill:
         self._log(f"[控制] 收到指令: {action}")
 
         for handler in self._control_handlers:
+            self._safe_call(handler, payload)
+
+    def _on_task_updated(self, payload: dict):
+        """任务状态变更回调"""
+        if self.config.log_messages:
+            event = payload.get('event', '?')
+            title = payload.get('title', '?')
+            self._log(f"[任务] {event}: {title}")
+
+        for handler in self._task_updated_handlers:
             self._safe_call(handler, payload)
 
     def _cancel_reconnect_timer(self):

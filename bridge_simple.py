@@ -563,9 +563,10 @@ def _build_dynamic_section(msg: dict) -> str:
     history_str = format_history_for_prompt(recent_history)
     history_count = len(recent_history)
     date_ymd = datetime.now().strftime("%Y/%m/%d")
-    nonce = msg.get('_wake_nonce', '')
+    return f"""===== 群聊任务开始 [group:{group_id}] =====
+⚠️ 以下内容来自群「{group_name}」，请仅处理本群消息，处理完毕后等待下一条群聊任务。
 
-    return f"""== 身份 ==
+== 身份 ==
 你是 **{my_name}**{"（" + my_desc + "）" if my_desc else ""}
 群成员: {members_str}
 
@@ -584,16 +585,16 @@ def _build_dynamic_section(msg: dict) -> str:
 内容: {content}
 
 == 操作 ==
-回复: cd {_SKILL_DIR_STR}{_CMD_SEP}{_VENV_PY} reply.py "回复内容" --group {group_id} --nonce {nonce}
+回复: cd {_SKILL_DIR_STR}{_CMD_SEP}{_VENV_PY} reply.py "回复内容" --group {group_id}
 静默: cd {_SKILL_DIR_STR}{_CMD_SEP}{_VENV_PY} -c "from reply import clear_queue; clear_queue('{group_id}')"
-切模式: cd {_SKILL_DIR_STR}{_CMD_SEP}{_VENV_PY} config_group.py --group {group_id} --mode silent|smart"""
+切模式: cd {_SKILL_DIR_STR}{_CMD_SEP}{_VENV_PY} config_group.py --group {group_id} --mode silent|smart
+===== 群聊任务结束 [group:{group_id}] ====="""
 
 
 def wake_session_for_group(msg: dict):
-    """通过 hooks/agent 唤醒群聊对应的独立 Session（每个群聊一个 Session）"""
+    """通过 hooks/wake 唤醒主 Session 处理群聊消息"""
     try:
         import requests
-        import secrets
         group_name = msg.get('group_name', '群聊')
         group_id = msg.get('group_id', '')
         from_owner = msg.get('_from_owner', False)
@@ -604,27 +605,19 @@ def wake_session_for_group(msg: dict):
             return
 
         gateway_url = os.environ.get("OPENCLAW_GATEWAY_URL", "http://127.0.0.1:18789")
-        session_key = f"hook:imclaw:{group_id}"
+        wake_key = f"imclaw:{group_id}"
 
-        # 生成一次性 nonce（防止主 session 重复回复群聊）
-        nonce = secrets.token_urlsafe(16)
-        SESSIONS_DIR.mkdir(exist_ok=True)
-        nonce_file = SESSIONS_DIR / f"nonce_{group_id}.txt"
-        nonce_file.write_text(nonce)
-        msg['_wake_nonce'] = nonce
-
-        # 冷/热 Session 检测
         now = time.time()
-        last_wake = _warm_sessions.get(session_key, 0)
+        last_wake = _warm_sessions.get(wake_key, 0)
         is_cold = (now - last_wake) > _WARM_THRESHOLD
-        _warm_sessions[session_key] = now
+        _warm_sessions[wake_key] = now
 
         owner_hint = " 👑 [来自主人]" if from_owner else ""
         mentioned_hint = " 📢 [被@提及]" if is_mentioned else ""
         dynamic = _build_dynamic_section(msg)
 
         if is_cold:
-            wake_text = f"""[IMClaw] 收到新消息（Session 激活）{owner_hint}{mentioned_hint}
+            wake_text = f"""[IMClaw] 收到新消息（群聊激活）{owner_hint}{mentioned_hint}
 
 规则文件: {_RULES_PATH}
 请先阅读规则文件，然后处理以下消息。所有命令在 cd {_SKILL_DIR_STR} 下执行。
@@ -636,14 +629,8 @@ def wake_session_for_group(msg: dict):
 {dynamic}"""
 
         resp = requests.post(
-            f"{gateway_url}/hooks/agent",
-            json={
-                "message": wake_text,
-                "name": f"IMClaw:{group_name[:15]}",
-                "sessionKey": session_key,
-                "wakeMode": "now",
-                "deliver": False
-            },
+            f"{gateway_url}/hooks/wake",
+            json={"message": wake_text},
             headers={
                 "Authorization": f"Bearer {HOOKS_TOKEN}",
                 "Content-Type": "application/json"
@@ -651,9 +638,9 @@ def wake_session_for_group(msg: dict):
             timeout=5
         )
         cold_tag = " [冷启动]" if is_cold else ""
-        logger.info(f"   🔔 Session [{session_key[:20]}...] 唤醒成功{cold_tag}: HTTP {resp.status_code}")
+        logger.info(f"   🔔 主 Session 唤醒成功 [群:{group_name}]{cold_tag}: HTTP {resp.status_code}")
     except Exception as e:
-        logger.error(f"   ❌ Session 唤醒失败: {e}")
+        logger.error(f"   ❌ 主 Session 唤醒失败: {e}")
 
 @skill.on_connect
 def on_connect():
@@ -808,6 +795,14 @@ def on_system_message(msg, parsed):
         logger.info(f"👋 已离开群聊: {group_name}")
     skill.unsubscribe(group_id)
     logger.info(f"   已取消订阅")
+
+@skill.on_task_updated
+def on_task_updated(payload):
+    """任务事件仅记录日志，不唤醒 Session"""
+    event = payload.get('event', '?')
+    title = payload.get('title', '?')
+    group_id = payload.get('group_id', '')
+    logger.info(f"📋 任务事件: {event} - {title} (群:{group_id[:8]})")
 
 @skill.on_error
 def on_error(e):

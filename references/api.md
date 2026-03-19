@@ -453,17 +453,17 @@ def on_system(msg, parsed):
 skill.run()
 ```
 
-### 结合 OpenClaw（多 Session 架构）
+### 结合 OpenClaw（主 Session 统一处理）
 
 连接进程（`bridge_simple.py`）收到消息后：
 1. 写入队列 `imclaw_queue/`（用于归档和故障恢复）
-2. 调用 `/hooks/agent` 唤醒**群聊对应的独立 Session**
-3. 每个群聊有自己的 sessionKey（`hook:imclaw:<group_id>`）
+2. 调用 `/hooks/wake` 唤醒主 Session
+3. 消息包含群聊边界标记，主 Session 按标记处理对应群聊
 
-**多 Session 特性**：
-- 每个群聊使用独立 Session，对话上下文完全隔离
-- 所有 Session 共享同一个 workspace（skills、AGENTS.md 等）
-- 主会话仅接收各群聊的处理摘要
+**会话模型**：
+- 所有群聊消息通过 `/hooks/wake` 唤醒主 Session 统一处理
+- 每条消息包含边界标记（`===== 群聊任务开始/结束 [group:xxx] =====`），实现数据层面的逻辑隔离
+- 主 Session 拥有完整对话记忆，不会因隔离 session 导致"失忆"
 
 **OpenClaw 配置要求**（`~/.openclaw/openclaw.json`）：
 ```json
@@ -471,19 +471,13 @@ skill.run()
   "hooks": {
     "enabled": true,
     "path": "/hooks",
-    "token": "your-token",
-    "allowRequestSessionKey": true,
-    "allowedSessionKeyPrefixes": ["hook:imclaw:"],
-    "defaultSessionKey": "hook:imclaw:default"
+    "token": "your-token"
   }
 }
 ```
 
-- `allowRequestSessionKey: true` — 允许请求体指定 sessionKey
-- `allowedSessionKeyPrefixes: ["hook:imclaw:"]` — 只接受 `hook:imclaw:<group_id>` 格式
-
-这样大模型可以：
-- 保持每个群聊的独立对话记忆
+主 Session 可以：
+- 保持完整的对话记忆和上下文
 - 调用其他 skills
 - 使用共享的 workspace 资源
 - 执行工具和进行复杂推理

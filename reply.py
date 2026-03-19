@@ -276,48 +276,6 @@ def load_session(group_id: str = None) -> dict:
     return latest_session
 
 
-_NONCE_ACTIVE_TTL = 300  # active marker 有效期 5 分钟（支持同一次 wake 多次回复）
-
-
-def validate_nonce(group_id: str, nonce: str) -> bool:
-    """校验并消费一次性 nonce（bridge 生成，防止主 session 重复回复群聊）
-    
-    首次校验成功后写入 active marker（5 分钟有效），后续回复检查 marker 即可。
-    """
-    import time as _time
-    
-    SESSIONS_DIR.mkdir(exist_ok=True)
-    marker_file = SESSIONS_DIR / f"active_{group_id}.txt"
-    
-    # 检查 active marker（5 分钟内有效，支持多次回复）
-    if marker_file.exists():
-        try:
-            ts = float(marker_file.read_text().strip())
-            if _time.time() - ts < _NONCE_ACTIVE_TTL:
-                return True
-        except (ValueError, OSError):
-            pass
-    
-    # 首次校验：读取并消费 nonce 文件
-    nonce_file = SESSIONS_DIR / f"nonce_{group_id}.txt"
-    if not nonce_file.exists():
-        return False
-    try:
-        stored = nonce_file.read_text().strip()
-    except OSError:
-        return False
-    if stored != nonce:
-        return False
-    
-    # 消费 nonce 并写入 active marker
-    try:
-        nonce_file.unlink()
-    except OSError:
-        pass
-    marker_file.write_text(str(_time.time()))
-    return True
-
-
 def load_config():
     """从环境变量加载配置"""
     from imclaw_skill import resolve_env
@@ -447,12 +405,6 @@ def clear_queue(group_id: str = None):
                     count += 1
                 except FileNotFoundError:
                     pass
-        # 清理该群的 nonce 和 active marker
-        for name in (f"nonce_{group_id}.txt", f"active_{group_id}.txt"):
-            try:
-                (SESSIONS_DIR / name).unlink()
-            except (FileNotFoundError, OSError):
-                pass
     else:
         for group_dir in QUEUE_DIR.iterdir():
             if group_dir.is_dir():
@@ -841,7 +793,6 @@ def main():
     
     parser.add_argument("content", nargs="?", help="回复内容（可选，发送文件时可省略）")
     parser.add_argument("--group", "-g", help="指定群聊 ID（强烈推荐！）")
-    parser.add_argument("--nonce", help="一次性验证令牌（由 bridge 自动提供，防止主 session 误操作）")
     parser.add_argument("--user", "-u", help="给用户发私聊消息（自动进入 DM）")
     parser.add_argument("--agent", "-a", help="给龙虾发私聊消息（自动进入 DM）")
     parser.add_argument("--last", action="store_true", help="[已弃用] 发送到最近会话，多群聊时可能发错群")
@@ -902,18 +853,6 @@ def main():
             if not is_valid:
                 print(f"❌ {error}")
                 sys.exit(1)
-
-    # --group 必须配合 --nonce 使用（防止主 session 误操作群聊）
-    if args.group:
-        if not args.nonce:
-            print("⛔ --group 必须配合 --nonce 使用（由 bridge 自动提供）")
-            print("   正确格式: reply.py \"内容\" --group <id> --nonce <token>")
-            print("   如果你是主 Session，请不要直接向群聊发消息。")
-            sys.exit(1)
-        if not validate_nonce(args.group, args.nonce):
-            print("⛔ nonce 校验失败（可能已过期或被使用）")
-            print("   如果你是主 Session，请不要直接向群聊发消息。")
-            sys.exit(1)
 
     if args.user:
         result = send_dm_message(args.content, "user", args.user, file_paths)

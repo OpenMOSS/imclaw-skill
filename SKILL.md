@@ -129,33 +129,22 @@ openclaw restart
 │   │  bridge_simple.py  │  连接进程 (常驻)                   │
 │   │  ├─ 收到消息        │                                   │
 │   │  ├─ 按 group_id 路由│                                   │
-│   │  └─ 调用 hooks/agent│  (每个群聊独立 Session)           │
+│   │  └─ 调用 hooks/wake │  (唤醒主 Session)                 │
 │   └─────────┬──────────┘                                   │
 │             ↓                                               │
-│   ┌────────────────────┐  ┌────────────────────┐          │
-│   │  Session: 群聊 A   │  │  Session: 群聊 B   │  ...      │
-│   │  sessionKey:       │  │  sessionKey:       │          │
-│   │  hook:imclaw:<id>  │  │  hook:imclaw:<id>  │          │
-│   │  ├─ 独立对话记忆    │  │  ├─ 独立对话记忆    │          │
-│   │  ├─ 共享 workspace  │  │  ├─ 共享 workspace  │          │
-│   │  └─ 智能回复        │  │  └─ 智能回复        │          │
-│   └────────────────────┘  └────────────────────┘          │
-│             ↓                                               │
-│   ┌────────────────────┐                                   │
-│   │   主会话（仅摘要）   │  接收各群聊处理摘要               │
-│   └────────────────────┘                                   │
+│   ┌────────────────────────────────────────────────┐       │
+│   │  主 Session                                     │       │
+│   │  ├─ 接收群聊消息（含边界标记区分不同群）          │       │
+│   │  ├─ 完整对话记忆（跨群共享上下文）               │       │
+│   │  └─ 按边界标记处理对应群聊消息                   │       │
+│   └────────────────────────────────────────────────┘       │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**多 Session 特性**：
-- 每个群聊使用独立的 Session（sessionKey: `hook:imclaw:<group_id>`）
-- 各群聊的对话上下文完全隔离，不会互相干扰
-- 所有 Session 共享同一个 workspace（skills、AGENTS.md、MEMORY 等）
-- 主会话仅接收各群聊的处理摘要，不参与实际对话
-
-**Webhook 多 Session 前置条件**（`openclaw.json` 的 `hooks` 必须包含）：
-- `allowRequestSessionKey: true` — 允许请求体指定 sessionKey
-- `allowedSessionKeyPrefixes: ["hook:imclaw:"]` — 只接受 `hook:imclaw:<group_id>` 格式
+**会话模型**：
+- 所有群聊消息通过 `/hooks/wake` 唤醒主 Session 统一处理
+- 每条消息包含群聊边界标记（`===== 群聊任务开始/结束 [group:xxx] =====`），实现数据层面的逻辑隔离
+- 主 Session 拥有完整对话记忆，解决了之前隔离 session 导致的"失忆"问题
 
 ## 安装步骤
 
@@ -559,7 +548,7 @@ sleep 2
 1. **用户** 在 IMClaw 群聊/私聊发送消息
 2. **连接进程** 通过 WebSocket 收到消息
 3. 连接进程写入 `imclaw_queue/`
-4. 连接进程调用 `/hooks/agent` 唤醒独立 Session（含路由规则提示）
+4. 连接进程调用 `/hooks/wake` 唤醒主 Session（含群聊边界标记和路由规则提示）
 5. **大模型** 根据路由规则决定：回复当前群聊（`--group`）/ 发私聊（`--user`/`--agent`）/ 不响应
 
 ## 多媒体消息

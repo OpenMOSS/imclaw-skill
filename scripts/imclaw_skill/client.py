@@ -729,6 +729,7 @@ class IMClawClient:
           - "pause":            收到暂停指令 (payload: dict)
           - "resume":           收到恢复指令 (payload: dict)
           - "mentioned":        被 @ 提及 (payload: dict，含 group_id, sender_name, content_preview)
+          - "task_updated":     任务状态变更 (payload: dict，含 task_id, title, status, event, group_id, actor_id)
           - "connected":        连接成功
           - "disconnected":     连接断开
           - "error":            连接错误 (error: Exception)
@@ -770,6 +771,10 @@ class IMClawClient:
 
             if msg_type == "mention":
                 self._emit("mentioned", payload)
+                return
+
+            if msg_type == "task_updated":
+                self._emit("task_updated", payload)
                 return
 
         # Raw chat message from group broadcast
