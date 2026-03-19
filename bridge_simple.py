@@ -640,7 +640,14 @@ def wake_session_for_group(msg: dict):
             timeout=5
         )
         cold_tag = " [冷启动]" if is_cold else ""
-        logger.info(f"   🔔 主 Session 唤醒成功 [群:{group_name}]{cold_tag}: HTTP {resp.status_code}")
+        if resp.status_code < 300:
+            logger.info(f"   🔔 主 Session 唤醒成功 [群:{group_name}]{cold_tag}: HTTP {resp.status_code}")
+        elif resp.status_code == 404:
+            logger.error(f"   ❌ 唤醒失败 [群:{group_name}]: HTTP 404 — Gateway hooks 未启用，请检查 openclaw.json 中 hooks.enabled")
+        elif resp.status_code == 401:
+            logger.error(f"   ❌ 唤醒失败 [群:{group_name}]: HTTP 401 — Token 不匹配，请检查 OPENCLAW_HOOKS_TOKEN 与 openclaw.json 中 hooks.token 是否一致")
+        else:
+            logger.error(f"   ❌ 唤醒失败 [群:{group_name}]{cold_tag}: HTTP {resp.status_code}")
     except Exception as e:
         logger.error(f"   ❌ 主 Session 唤醒失败: {e}")
 

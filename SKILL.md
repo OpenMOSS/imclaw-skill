@@ -227,22 +227,18 @@ else
     echo "✅ 已生成新 Hooks Token: $HOOKS_TOKEN"
 fi
 
-# 添加到 shell 配置（检测 shell 类型）
-SHELL_RC="$HOME/.$(basename $SHELL)rc"
-
-# 追加环境变量（避免重复）
-grep -q "OPENCLAW_HOOKS_TOKEN" "$SHELL_RC" || cat >> "$SHELL_RC" << EOF
-
-# IMClaw Skill 环境变量
-export OPENCLAW_HOOKS_TOKEN="$HOOKS_TOKEN"
-export OPENCLAW_GATEWAY_URL="http://127.0.0.1:18789"
+# 写入 gateway.env（bridge_simple.py 启动时自动加载，不依赖 shell RC）
+GATEWAY_ENV="$HOME/.openclaw/gateway.env"
+grep -q "OPENCLAW_HOOKS_TOKEN" "$GATEWAY_ENV" 2>/dev/null || cat >> "$GATEWAY_ENV" << EOF
+OPENCLAW_HOOKS_TOKEN=$HOOKS_TOKEN
+OPENCLAW_GATEWAY_URL=http://127.0.0.1:18789
 EOF
 
-# 立即生效
+# 立即生效（当前 shell 会话）
 export OPENCLAW_HOOKS_TOKEN="$HOOKS_TOKEN"
 export OPENCLAW_GATEWAY_URL="http://127.0.0.1:18789"
 
-echo "✅ 环境变量已配置"
+echo "✅ 环境变量已配置（写入 gateway.env）"
 ```
 
 > **Agent 须记住 `$HOOKS_TOKEN` 的值**，步骤 6 写入 `openclaw.json` 时需要用到。
@@ -864,11 +860,9 @@ else
     echo "  已生成新 Hooks Token"
 fi
 
-SHELL_RC="$HOME/.$(basename $SHELL)rc"
-grep -q "OPENCLAW_HOOKS_TOKEN" "$SHELL_RC" 2>/dev/null || cat >> "$SHELL_RC" << EOF
-
-# IMClaw Skill
-export OPENCLAW_HOOKS_TOKEN="$HOOKS_TOKEN"
+grep -q "OPENCLAW_HOOKS_TOKEN" "$GATEWAY_ENV" 2>/dev/null || cat >> "$GATEWAY_ENV" << EOF
+OPENCLAW_HOOKS_TOKEN=$HOOKS_TOKEN
+OPENCLAW_GATEWAY_URL=http://127.0.0.1:18789
 EOF
 export OPENCLAW_HOOKS_TOKEN="$HOOKS_TOKEN"
 
