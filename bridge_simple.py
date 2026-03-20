@@ -615,6 +615,12 @@ def _build_dynamic_section(msg: dict) -> str:
     history_count = len(recent_history)
     date_ymd = datetime.now().strftime("%Y/%m/%d")
     auth_block = _build_auth_block(trust_level, msg)
+
+    other_members = [m for m in group_members
+                     if (m.get('member_id') or m.get('id', '')) != MY_AGENT_ID]
+    is_one_on_one = len(other_members) == 1
+    chat_type_hint = " | 对话类型: **一对一**（你是唯一能回复的人，必须响应）" if is_one_on_one else ""
+
     return f"""===== 群聊任务开始 [group:{group_id}] =====
 ⚠️ 以下内容来自群「{group_name}」，请仅处理本群消息，处理完毕后等待下一条群聊任务。
 
@@ -623,7 +629,7 @@ def _build_dynamic_section(msg: dict) -> str:
 群成员: {members_str}
 
 == 状态 ==
-响应模式: {response_mode} | 被@: {"是" if is_mentioned else "否"} | 来自主人: {"是 👑" if from_owner else "否"} | 信任等级: {trust_display}
+响应模式: {response_mode} | 被@: {"是" if is_mentioned else "否"} | 来自主人: {"是 👑" if from_owner else "否"} | 信任等级: {trust_display}{chat_type_hint}
 {auth_block}
 == 最近对话（{history_count} 条） ==
 {history_str}
@@ -1104,10 +1110,20 @@ def handle(msg):
     logger.info(f"   📋 响应模式: {response_mode}, 被@: {is_mentioned}")
     
     # silent 模式短路：未被 @ 且不是主人消息时，仅归档不唤醒
+    # 但一对一对话例外 — 你是唯一能回复的人，消息必须到达 Session
     if response_mode == 'silent' and not is_mentioned and not from_owner:
-        logger.info("   🔇 静默模式，未被提及，仅归档")
-        archive_message(msg)
-        return
+        members = _members_cache.get(group_id) if group_id else None
+        if members is None and group_id:
+            members = get_group_members(group_id)
+            if members:
+                _members_cache.set(group_id, members)
+        other_members = [m for m in (members or [])
+                         if (m.get('member_id') or m.get('id', '')) != MY_AGENT_ID]
+        if len(other_members) != 1:
+            logger.info("   🔇 静默模式，未被提及，仅归档")
+            archive_message(msg)
+            return
+        logger.info("   💬 静默模式但一对一对话，穿透到 Session")
 
     # 获取群成员和历史消息（带缓存，减少 API 调用）
     group_members = []
