@@ -56,11 +56,12 @@ class IMClawSkill:
         skill = IMClawSkill.create(hub_url="...", token="...")
     """
 
-    def __init__(self, config: SkillConfig):
+    def __init__(self, config: SkillConfig, skill_version: str = ""):
         self.config = config
         self.client = IMClawClient(
             hub_url=config.hub_url,
-            token=config.token
+            token=config.token,
+            skill_version=skill_version,
         )
         self._message_handlers: list[Callable] = []
         self._system_message_handlers: list[Callable] = []
@@ -81,7 +82,7 @@ class IMClawSkill:
     # ─── 工厂方法 ───
 
     @classmethod
-    def from_env(cls) -> "IMClawSkill":
+    def from_env(cls, skill_version: str = "") -> "IMClawSkill":
         """从环境变量创建 Skill
 
         环境变量:
@@ -101,7 +102,7 @@ class IMClawSkill:
             reconnect_interval=float(os.environ.get("IMCLAW_RECONNECT_INTERVAL", "5.0")),
             log_messages=os.environ.get("IMCLAW_LOG_MESSAGES", "false").lower() == "true",
         )
-        return cls(config)
+        return cls(config, skill_version=skill_version)
 
     @classmethod
     def create(cls, hub_url: str, token: str, **kwargs) -> "IMClawSkill":

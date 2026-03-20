@@ -45,9 +45,10 @@ def _guess_file_type(ext: str) -> str:
 class IMClawClient:
     """IMClaw 底层客户端"""
 
-    def __init__(self, hub_url: str, token: str):
+    def __init__(self, hub_url: str, token: str, skill_version: str = ""):
         self.hub_url = hub_url.rstrip("/")
         self.token = token
+        self.skill_version = skill_version
         self._ws: Optional[websocket.WebSocketApp] = None
         self._ws_thread: Optional[threading.Thread] = None
         self._connected = threading.Event()
@@ -100,6 +101,8 @@ class IMClawClient:
 
         ws_url = self.hub_url.replace("http://", "ws://").replace("https://", "wss://")
         ws_url = f"{ws_url}/ws?token={self.token}"
+        if self.skill_version:
+            ws_url += f"&skill_version={self.skill_version}"
 
         self._connected.clear()
         self._ws = websocket.WebSocketApp(

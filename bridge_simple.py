@@ -402,11 +402,25 @@ except Exception as e:
     logger.error(f"❌ 模块导入失败: {e}")
     sys.exit(1)
 
+# 读取 skill 版本
+def _read_skill_version() -> str:
+    meta_file = SKILL_DIR / "_meta.json"
+    if meta_file.exists():
+        try:
+            return json.loads(meta_file.read_text()).get("version", "")
+        except Exception:
+            pass
+    return ""
+
+SKILL_VERSION = _read_skill_version()
+
 # 加载配置
 try:
-    skill = IMClawSkill.from_env()
+    skill = IMClawSkill.from_env(skill_version=SKILL_VERSION)
     logger.info(f"✅ 配置加载成功")
     logger.info(f"   Hub: {skill.config.hub_url}")
+    if SKILL_VERSION:
+        logger.info(f"   Skill 版本: v{SKILL_VERSION}")
 except Exception as e:
     logger.error(f"❌ 配置加载失败: {e}")
     sys.exit(1)
@@ -1209,6 +1223,25 @@ def _is_self_removal(msg: dict) -> bool:
     targets = parsed.get('targets', [])
     return any(t.get('id') == MY_AGENT_ID for t in targets)
 
+def _is_skill_update_request(text: str) -> bool:
+    """
+    判断是否为“更新 IMClaw skill 到最新版本”的自然语言请求。
+    只在 from_owner=true 时才会触发本地 update.py。
+    """
+    if not text:
+        return False
+    t_lower = text.strip().lower()
+    if not t_lower:
+        return False
+
+    # 期望的中文/英文组合：IMClaw + (skill/技能) + 更新/Latest + 最新版本
+    has_imclaw = "imclaw" in t_lower
+    has_skill = ("skill" in t_lower) or ("技能" in text)
+    has_update = ("更新" in text) or ("update" in t_lower)
+    has_latest = ("最新版本" in text) or ("最新" in text) or ("latest" in t_lower)
+
+    return has_imclaw and has_skill and has_update and has_latest
+
 
 @skill.on_message
 def handle(msg):
@@ -1258,6 +1291,63 @@ def handle(msg):
     # 跳过自己发送的消息
     if MY_AGENT_ID and sender_id == MY_AGENT_ID:
         logger.info("   ⏭️ 跳过自己的消息")
+        return
+
+    # Owner 主动请求“更新 skill”（自然语言触发，避免展示 shell 命令）
+    if from_owner and _is_skill_update_request(content):
+        logger.info("🛠️ 检测到 Skill 更新请求：启动 update.py ...")
+        try:
+            # 先归档本条消息（保持行为可追溯）
+            archive_message(msg)
+        except Exception:
+            pass
+
+        # 先回复一句“已开始更新”（尽量在 bridge 被停止前把反馈发出去）
+        try:
+            import subprocess as _subprocess
+            ack_text = "收到，我正在检查并更新 IMClaw Skill（本地自更新）... 请稍等。"
+            if group_id:
+                _subprocess.run(
+                    [sys.executable, str(SKILL_DIR / "reply.py"), ack_text, "--group", group_id],
+                    cwd=str(SKILL_DIR),
+                    check=False,
+                    stdout=_subprocess.DEVNULL,
+                    stderr=_subprocess.STDOUT,
+                )
+            else:
+                if sender_type == "user" and sender_id:
+                    _subprocess.run(
+                        [sys.executable, str(SKILL_DIR / "reply.py"), ack_text, "--user", sender_id],
+                        cwd=str(SKILL_DIR),
+                        check=False,
+                        stdout=_subprocess.DEVNULL,
+                        stderr=_subprocess.STDOUT,
+                    )
+                elif sender_type == "agent" and sender_id:
+                    _subprocess.run(
+                        [sys.executable, str(SKILL_DIR / "reply.py"), ack_text, "--agent", sender_id],
+                        cwd=str(SKILL_DIR),
+                        check=False,
+                        stdout=_subprocess.DEVNULL,
+                        stderr=_subprocess.STDOUT,
+                    )
+        except Exception as e:
+            logger.warning(f"⚠️ 更新请求回复失败: {e}")
+
+        # 然后启动更新脚本（detach，避免 bridge 终止导致中断）
+        try:
+            import subprocess as _subprocess
+            log_fd = open(SKILL_DIR / "update.log", "a", encoding="utf-8")
+            _subprocess.Popen(
+                [sys.executable, str(SKILL_DIR / "update.py")],
+                cwd=str(SKILL_DIR),
+                stdout=log_fd,
+                stderr=_subprocess.STDOUT,
+                start_new_session=True,
+            )
+            logger.info("✅ update.py 已启动（后台）")
+        except Exception as e:
+            logger.error(f"❌ 启动 update.py 失败: {e}")
         return
     
     # 获取响应模式和 @提及 状态（轻量操作，不需要 API 调用）

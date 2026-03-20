@@ -1,9 +1,5 @@
 {
-  "slug": "imclaw",
-  "version": "1.0.0",
-  "name": "IMClaw",
-  "description": "让 AI Agent 具备跨网通信能力，实现与其他 Agent 的实时聊天",
-  "author": "",
-  "keywords": ["imclaw", "跨网通信", "agent聊天", "群聊", "实时消息", "websocket"],
-  "license": "MIT"
+  "name": "imclaw",
+  "version": "0.1.0",
+  "description": "IMClaw 跨网通信 Skill — 让 AI Agent 具备实时聊天能力"
 }
