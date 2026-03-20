@@ -209,6 +209,7 @@ class TTLCache:
 _msg_dedup = MessageDedup()
 _members_cache = TTLCache(ttl_seconds=60)
 _history_cache = TTLCache(ttl_seconds=10)
+_tasks_cache = TTLCache(ttl_seconds=30)
 
 # 路径设置 - 自动检测，支持多种部署方式
 def get_skill_dir() -> Path:
@@ -497,6 +498,99 @@ def format_history_for_prompt(history: list[dict], limit: int = 30) -> str:
         lines.append(f"  {sender}: {content}")
     return "\n".join(lines)
 
+def get_group_tasks(group_id: str) -> list[dict]:
+    """获取群聊的任务列表，403 时主动取消订阅"""
+    try:
+        tasks = skill.client.list_tasks(group_id)
+        return tasks if isinstance(tasks, list) else []
+    except Exception as e:
+        _handle_api_error(e, group_id, "获取任务列表")
+        return []
+
+
+def format_tasks_for_prompt(tasks: list[dict], members: list[dict]) -> str:
+    """格式化任务列表为树形结构供 prompt 使用
+
+    展示层级：主任务 → 子任务，含状态/认领者/指派者/依赖。
+    只展示活跃任务（open/claimed/in_progress），done/cancelled 只统计数量。
+    """
+    if not tasks:
+        return "📋 暂无任务"
+
+    member_names = {}
+    for m in members:
+        mid = m.get("member_id") or m.get("id", "")
+        name = m.get("display_name") or m.get("agent_name") or mid[:8]
+        if mid:
+            member_names[mid] = name
+
+    def _agent_name(agent_id):
+        if not agent_id:
+            return ""
+        return member_names.get(agent_id, agent_id[:8])
+
+    active_statuses = {"open", "claimed", "in_progress"}
+    top_tasks = [t for t in tasks if not t.get("parent_task_id")]
+    child_map = {}
+    for t in tasks:
+        parent = t.get("parent_task_id")
+        if parent:
+            child_map.setdefault(parent, []).append(t)
+
+    status_icons = {
+        "open": "⬜", "claimed": "🔒", "in_progress": "🔄",
+        "done": "✅", "cancelled": "❌",
+    }
+    priority_tags = {1: " 🔥", 2: " 🚨"}
+
+    lines = []
+    done_count = sum(1 for t in tasks if t.get("status") == "done")
+    cancelled_count = sum(1 for t in tasks if t.get("status") == "cancelled")
+    active_count = sum(1 for t in tasks if t.get("status") in active_statuses)
+
+    def _format_task(t, indent=""):
+        s = t.get("status", "open")
+        icon = status_icons.get(s, "❓")
+        tid = t.get("id", "")[:8]
+        title = t.get("title", "?")
+        prio = priority_tags.get(t.get("priority", 0), "")
+
+        parts = [f"{indent}{icon} [{tid}] {title}{prio}"]
+
+        claimer = t.get("claimed_by_id")
+        assignee = t.get("assigned_to_id")
+        if claimer:
+            parts.append(f"认领: {_agent_name(claimer)}")
+        elif assignee:
+            parts.append(f"指派: {_agent_name(assignee)}")
+        elif s == "open":
+            parts.append("无人认领")
+
+        return " (".join(parts[:1]) if len(parts) == 1 else f"{parts[0]} ({', '.join(parts[1:])})"
+
+    for t in top_tasks:
+        s = t.get("status", "open")
+        if s not in active_statuses:
+            continue
+        lines.append(_format_task(t))
+        children = child_map.get(t.get("id"), [])
+        for child in children:
+            if child.get("status") in active_statuses:
+                lines.append(_format_task(child, indent="  └─ "))
+
+    summary_parts = [f"📋 {active_count} 个活跃"]
+    if done_count:
+        summary_parts.append(f"{done_count} 个已完成")
+    if cancelled_count:
+        summary_parts.append(f"{cancelled_count} 个已取消")
+    header = " | ".join(summary_parts)
+
+    if not lines:
+        return f"{header}\n（所有任务已完成或取消）"
+
+    return f"{header}\n" + "\n".join(lines)
+
+
 def archive_message(msg: dict):
     """立即归档消息到 年/月/日/group_id.jsonl（所有消息都记录）"""
     now = datetime.now()
@@ -602,6 +696,7 @@ def _build_dynamic_section(msg: dict) -> str:
     is_mentioned = ctx.get('is_mentioned', False)
     group_members = ctx.get('group_members', [])
     recent_history = ctx.get('recent_history', [])
+    group_tasks = ctx.get('group_tasks', [])
 
     my_name = MY_PROFILE.get('display_name', '未知')
     my_desc = MY_PROFILE.get('description', '')
@@ -613,6 +708,7 @@ def _build_dynamic_section(msg: dict) -> str:
     members_str = format_members_for_prompt(group_members)
     history_str = format_history_for_prompt(recent_history)
     history_count = len(recent_history)
+    tasks_str = format_tasks_for_prompt(group_tasks, group_members)
     date_ymd = datetime.now().strftime("%Y/%m/%d")
     auth_block = _build_auth_block(trust_level, msg)
 
@@ -631,6 +727,9 @@ def _build_dynamic_section(msg: dict) -> str:
 == 状态 ==
 响应模式: {response_mode} | 被@: {"是" if is_mentioned else "否"} | 来自主人: {"是 👑" if from_owner else "否"} | 信任等级: {trust_display}{chat_type_hint}
 {auth_block}
+== 任务看板 ==
+{tasks_str}
+
 == 最近对话（{history_count} 条） ==
 {history_str}
 
@@ -643,10 +742,10 @@ def _build_dynamic_section(msg: dict) -> str:
 内容: {content}
 
 == 操作 ==
-⏱️ 耗时操作请先回复确认消息（如"收到，正在处理..."），再执行任务
 回复: cd {_SKILL_DIR_STR}{_CMD_SEP}{_VENV_PY} reply.py "回复内容" --group {group_id}
 静默: cd {_SKILL_DIR_STR}{_CMD_SEP}{_VENV_PY} -c "from reply import clear_queue; clear_queue('{group_id}')"
-切模式: cd {_SKILL_DIR_STR}{_CMD_SEP}{_VENV_PY} config_group.py --group {group_id} --mode silent|smart
+任务: cd {_SKILL_DIR_STR}{_CMD_SEP}{_VENV_PY} task.py --list --group {group_id}
+📖 完整操作指令与任务规则见: {_RULES_PATH}
 ===== 群聊任务结束 [group:{group_id}] ====="""
 
 
@@ -864,13 +963,71 @@ def on_system_message(msg, parsed):
     skill.unsubscribe(group_id)
     logger.info(f"   已取消订阅")
 
+
+def _wake_for_task_assignment(payload: dict):
+    """唤醒 Session 通知 Agent 被指派了任务（延迟发送，等当前 turn 结束）"""
+    task_id = payload.get('task_id', '')
+    title = payload.get('title', '?')
+    group_id = payload.get('group_id', '')
+    actor_id = payload.get('actor_id', '')
+    group_name = GROUP_NAME_CACHE.get(group_id, group_id[:8]) if group_id else '未知'
+
+    wake_text = f"""[IMClaw] 任务指派通知
+
+你被指派了一个新任务，请尽快处理。
+
+== 任务详情 ==
+任务: [{task_id[:8]}] {title}
+群聊: {group_name} ({group_id})
+指派者: {actor_id[:8]}
+
+== 下一步 ==
+1. 查看任务详情: cd {_SKILL_DIR_STR}{_CMD_SEP}{_VENV_PY} task.py --detail {task_id}
+2. 认领任务: cd {_SKILL_DIR_STR}{_CMD_SEP}{_VENV_PY} task.py --claim {task_id}
+3. 执行工作并完成: cd {_SKILL_DIR_STR}{_CMD_SEP}{_VENV_PY} task.py --complete {task_id}
+
+📖 完整任务规则见: {_RULES_PATH}"""
+
+    def _delayed_wake():
+        import requests
+        gateway_url = os.environ.get("OPENCLAW_GATEWAY_URL", "http://127.0.0.1:18789")
+        headers = {"Authorization": f"Bearer {HOOKS_TOKEN}", "Content-Type": "application/json"}
+
+        for attempt, delay in enumerate((3, 10, 30), 1):
+            time.sleep(delay)
+            try:
+                resp = requests.post(
+                    f"{gateway_url}/hooks/wake", json={"text": wake_text},
+                    headers=headers, timeout=5
+                )
+                logger.info(f"   🔔 任务指派 wake #{attempt} (延迟{delay}s): HTTP {resp.status_code}")
+                if resp.status_code < 300:
+                    return
+            except Exception as e:
+                logger.warning(f"   ⚠️ 任务指派 wake #{attempt} 失败: {e}")
+
+    threading.Thread(target=_delayed_wake, daemon=True).start()
+    logger.info(f"   🔔 任务指派 wake 已排程（3s/10s/30s 延迟重试）")
+
+
 @skill.on_task_updated
 def on_task_updated(payload):
-    """任务事件仅记录日志，不唤醒 Session"""
+    """任务事件处理：记录日志 + 清除任务缓存 + 指派给自己时唤醒 Session"""
     event = payload.get('event', '?')
     title = payload.get('title', '?')
     group_id = payload.get('group_id', '')
+    actor_id = payload.get('actor_id', '')
     logger.info(f"📋 任务事件: {event} - {title} (群:{group_id[:8]})")
+
+    if group_id:
+        _tasks_cache.invalidate(group_id)
+
+    if event == 'task_assigned' and actor_id != MY_AGENT_ID and MY_AGENT_ID:
+        assigned_to = payload.get('assigned_to_id', '')
+        if assigned_to == MY_AGENT_ID:
+            task_id = payload.get('task_id', '')
+            logger.info(f"   📌 任务被指派给我: [{task_id[:8]}] {title}")
+            _wake_for_task_assignment(payload)
 
 @skill.on_authorization_updated
 def on_authorization_updated(payload):
@@ -1125,9 +1282,10 @@ def handle(msg):
             return
         logger.info("   💬 静默模式但一对一对话，穿透到 Session")
 
-    # 获取群成员和历史消息（带缓存，减少 API 调用）
+    # 获取群成员、历史消息和任务列表（带缓存，减少 API 调用）
     group_members = []
     recent_history = []
+    group_tasks = []
     if group_id:
         group_members = _members_cache.get(group_id)
         if group_members is None:
@@ -1145,6 +1303,11 @@ def handle(msg):
             recent_history = get_recent_history(group_id, limit=history_limit)
             if recent_history:
                 _history_cache.set(group_id, recent_history)
+        
+        group_tasks = _tasks_cache.get(group_id)
+        if group_tasks is None:
+            group_tasks = get_group_tasks(group_id)
+            _tasks_cache.set(group_id, group_tasks if group_tasks else [])
     
     # 将 API 拉到的历史消息归档到本地（自动去重）
     if recent_history and group_id:
@@ -1164,6 +1327,7 @@ def handle(msg):
         "is_mentioned": is_mentioned,
         "group_members": group_members,
         "recent_history": recent_history,
+        "group_tasks": group_tasks,
     }
     
     # 处理消息
