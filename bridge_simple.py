@@ -224,7 +224,7 @@ def get_skill_dir() -> Path:
         return script_dir
     
     # 最后使用默认路径
-    default_dir = Path.home() / ".openclaw" / "workspace" / "skills" / "imclaw"
+    default_dir = Path.home() / ".openclaw" / "workspace" / "skills" / "im-skill"
     return default_dir
 
 SKILL_DIR = get_skill_dir()
