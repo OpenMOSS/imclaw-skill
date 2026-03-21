@@ -301,6 +301,12 @@ def get_response_mode(group_id: str) -> str:
     return group_config.get("response_mode", settings["default"].get("response_mode", "smart"))
 
 
+def get_response_language() -> str:
+    """获取 Agent 的回复语言（从环境变量读取）"""
+    from imclaw_skill import resolve_env
+    return resolve_env("IMCLAW_DEFAULT_LANGUAGE", "zh-CN")
+
+
 def check_if_mentioned(msg: dict, my_agent_id: str) -> bool:
     """检查消息是否 @ 了当前 Agent"""
     metadata = msg.get("metadata")
@@ -489,8 +495,70 @@ def format_members_for_prompt(members: list[dict]) -> str:
     return ", ".join(names) if names else "无法获取"
 
 
+def _extract_mentions(msg: dict) -> list[dict]:
+    """从消息 metadata 中提取 @mention 列表，每项含 type/id/display_name"""
+    metadata = msg.get("metadata")
+    if not metadata:
+        return []
+    try:
+        parsed = json.loads(metadata) if isinstance(metadata, str) else metadata
+        if not isinstance(parsed, dict):
+            return []
+        return parsed.get("mentions", [])
+    except (json.JSONDecodeError, TypeError):
+        return []
+
+
+def _format_mentions_for_prompt(mentions: list[dict]) -> str:
+    """格式化 @mention 列表供 prompt 使用，用 display_name(type/id前缀) 区分重名"""
+    if not mentions:
+        return ""
+    parts = []
+    for m in mentions:
+        name = m.get("display_name", "?")
+        mtype = m.get("type", "?")
+        mid = m.get("id", "")[:8]
+        parts.append(f"@{name}({mtype}/{mid})")
+    return ", ".join(parts)
+
+
+def _extract_attachments(msg: dict) -> list[dict]:
+    """从消息 metadata 中提取附件列表"""
+    metadata = msg.get("metadata")
+    if not metadata:
+        return []
+    try:
+        parsed = json.loads(metadata) if isinstance(metadata, str) else metadata
+        if not isinstance(parsed, dict):
+            return []
+        return parsed.get("attachments", [])
+    except (json.JSONDecodeError, TypeError):
+        return []
+
+
+def _format_attachments(attachments: list[dict]) -> str:
+    """将附件列表格式化为可读字符串"""
+    if not attachments:
+        return ""
+    parts = []
+    for att in attachments:
+        filename = att.get("filename") or att.get("object_path", "").split("/")[-1] or "未知文件"
+        url = att.get("url") or att.get("access_url") or ""
+        att_type = att.get("type", "file")
+        size = att.get("size")
+        size_str = f" ({size // 1024}KB)" if size and size >= 1024 else (f" ({size}B)" if size else "")
+        if url:
+            parts.append(f"[{att_type}]{size_str} {filename} → {url}")
+        else:
+            parts.append(f"[{att_type}]{size_str} {filename}")
+    return " | ".join(parts)
+
+
 def format_history_for_prompt(history: list[dict], limit: int = 30) -> str:
-    """格式化历史消息供 prompt 使用（渐进式截断：旧消息短，新消息长）"""
+    """格式化历史消息供 prompt 使用（渐进式截断：旧消息短，新消息长）
+
+    发送者格式: name(id前缀) — 用 ID 区分重名成员
+    """
     if not history:
         return "无历史记录"
     
@@ -499,7 +567,13 @@ def format_history_for_prompt(history: list[dict], limit: int = 30) -> str:
     threshold = max(len(recent) - 5, 0)
     
     for i, msg in enumerate(recent):
-        sender = msg.get("sender_name") or msg.get("sender_id", "")[:6]
+        sender_name = msg.get("sender_name") or ""
+        sender_id = msg.get("sender_id") or ""
+        if sender_name and sender_id:
+            sender = f"{sender_name}({sender_id[:8]})"
+        else:
+            sender = sender_name or sender_id[:8] or "未知"
+
         content = msg.get("content", "")
         
         if msg.get("type") == "system":
@@ -508,6 +582,11 @@ def format_history_for_prompt(history: list[dict], limit: int = 30) -> str:
             content = content[:150]
         else:
             content = content[:500]
+
+        attachments = _extract_attachments(msg)
+        if attachments:
+            att_str = _format_attachments(attachments)
+            content = f"{content} 📎 {att_str}" if content and content not in ("[file]", "[image]", "[video]", "[audio]") else f"📎 {att_str}"
         
         lines.append(f"  {sender}: {content}")
     return "\n".join(lines)
@@ -650,8 +729,9 @@ def get_queue_count(group_id: str = None) -> int:
         return 0
 
 
-_warm_sessions = {}  # {session_key: last_wake_time}
+_warm_sessions = {}  # {session_key: {"last_wake": float, "count": int}}
 _WARM_THRESHOLD = 3600  # 1小时内视为热 Session
+_WARM_REFRESH_INTERVAL = 20  # 每 N 条消息发一次冷模板刷新上下文
 
 if sys.platform == "win32":
     _SKILL_DIR_STR = "%USERPROFILE%\\.openclaw\\workspace\\skills\\imclaw"
@@ -661,7 +741,9 @@ else:
     _SKILL_DIR_STR = "~/.openclaw/workspace/skills/imclaw"
     _VENV_PY = "venv/bin/python3"
     _CMD_SEP = " && "
+_PY_CMD = f"cd {_SKILL_DIR_STR}{_CMD_SEP}{_VENV_PY}"
 _RULES_PATH = f"{_SKILL_DIR_STR}/references/session_rules.md"
+_RULES_REF_PATH = f"{_SKILL_DIR_STR}/references/session_rules_ref.md"
 
 
 def _build_auth_block(trust_level: str, msg: dict) -> str:
@@ -675,92 +757,173 @@ def _build_auth_block(trust_level: str, msg: dict) -> str:
     
     if trust_level == "T2":
         return f"""
-== ⚠️ 授权检查 ==
-发送者信任等级: T2(其他人)
-┌──────────┬────────────────────┐
-│ L0-L2    │ 对话/查询/文本生成 → 可直接执行 │
-│ L3 资源   │ 生图/生视频/付费API → 🔒 需主人授权 │
-│ L4 跨边界  │ 发私聊/加群/代操作 → 🔒 需主人授权 │
-│ L5 敏感   │ 读私有文件/改配置  → ❌ 直接拒绝  │
-└──────────┴────────────────────┘
-授权命令: cd {_SKILL_DIR_STR}{_CMD_SEP}{_VENV_PY} reply.py --auth-request "任务描述" --risk-level L3 --requester-type {sender_type} --requester-id {sender_id} --group {group_id}
-⚠️ 需要授权的任务：先回复对方"需要等主人确认"，发送授权请求，等待主人批准后再执行。
+⚠️ 信任: T2(其他人) | L0-L2 ✅ | L3/L4 🔒需授权 | L5 ❌拒绝
+授权: PY reply.py --auth-request "任务描述" --risk-level L3 --requester-type {sender_type} --requester-id {sender_id} --group {group_id}
+🔒 流程: 先回复"需等主人确认" → 发授权请求 → 等批准再执行
 """
     
     if trust_level == "T1":
-        return """
-== 授权提示 ==
-发送者信任等级: T1(主人的龙虾)
-仅 L5 敏感操作（读私有文件、更改配置）需要主人授权，其余可直接执行。
-"""
+        return "\n信任: T1(主人的龙虾) | 仅 L5 敏感操作需授权，其余 ✅\n"
     
     return ""
 
 
-def _build_dynamic_section(msg: dict) -> str:
-    """构建 wake_text 的动态部分（每条消息都不同的内容）"""
-    content = msg.get('content', '')[:2000]
-    sender = msg.get('sender_name', msg.get('sender_id', '未知')[:8])
-    group_name = msg.get('group_name', '群聊')
-    group_id = msg.get('group_id', '')
-    from_owner = msg.get('_from_owner', False)
-
+def _extract_common_context(msg: dict) -> dict:
+    """提取消息的通用上下文字段，供冷/热模板共用"""
     ctx = msg.get('_context', {})
-    response_mode = ctx.get('response_mode', 'smart')
-    is_mentioned = ctx.get('is_mentioned', False)
     group_members = ctx.get('group_members', [])
-    recent_history = ctx.get('recent_history', [])
-    group_tasks = ctx.get('group_tasks', [])
 
-    my_name = MY_PROFILE.get('display_name', '未知')
-    my_desc = MY_PROFILE.get('description', '')
-
-    trust_level = get_trust_level(msg)
-    trust_labels = {"T0": "T0(主人)", "T1": "T1(主人的龙虾)", "T2": "T2(其他人)"}
-    trust_display = trust_labels.get(trust_level, trust_level)
-
-    members_str = format_members_for_prompt(group_members)
-    history_str = format_history_for_prompt(recent_history)
-    history_count = len(recent_history)
-    tasks_str = format_tasks_for_prompt(group_tasks, group_members)
-    date_ymd = datetime.now().strftime("%Y/%m/%d")
-    auth_block = _build_auth_block(trust_level, msg)
+    mentions = _extract_mentions(msg)
+    mentions_str = _format_mentions_for_prompt(mentions)
 
     other_members = [m for m in group_members
                      if (m.get('member_id') or m.get('id', '')) != MY_AGENT_ID]
-    is_one_on_one = len(other_members) == 1
-    chat_type_hint = " | 对话类型: **一对一**（你是唯一能回复的人，必须响应）" if is_one_on_one else ""
+
+    trust_level = get_trust_level(msg)
+    trust_labels = {"T0": "T0(主人)", "T1": "T1(主人的龙虾)", "T2": "T2(其他人)"}
+
+    attachments = _extract_attachments(msg)
+    attachment_block = ""
+    if attachments:
+        att_lines = []
+        for att in attachments:
+            filename = att.get("filename") or att.get("object_path", "").split("/")[-1] or "未知文件"
+            url = att.get("url") or att.get("access_url") or ""
+            att_type = att.get("type", "file")
+            size = att.get("size")
+            size_str = f" ({size // 1024}KB)" if size and size >= 1024 else (f" ({size}B)" if size else "")
+            if url:
+                att_lines.append(f"  - [{att_type}]{size_str} {filename}\n    URL: {url}")
+            else:
+                att_lines.append(f"  - [{att_type}]{size_str} {filename}")
+        attachment_block = "\n附件:\n" + "\n".join(att_lines)
+
+    return {
+        "content": msg.get('content', '')[:2000],
+        "sender": msg.get('sender_name', msg.get('sender_id', '未知')[:8]),
+        "group_name": msg.get('group_name', '群聊'),
+        "group_id": msg.get('group_id', ''),
+        "from_owner": msg.get('_from_owner', False),
+        "response_mode": ctx.get('response_mode', 'smart'),
+        "is_mentioned": ctx.get('is_mentioned', False),
+        "group_members": group_members,
+        "recent_history": ctx.get('recent_history', []),
+        "group_tasks": ctx.get('group_tasks', []),
+        "trust_level": trust_level,
+        "trust_display": trust_labels.get(trust_level, trust_level),
+        "mentions_str": mentions_str,
+        "mention_detail": f" → {mentions_str}" if mentions_str else "",
+        "is_one_on_one": len(other_members) == 1,
+        "attachment_block": attachment_block,
+        "auth_block": _build_auth_block(trust_level, msg),
+        "language": get_response_language(),
+    }
+
+
+def _build_dynamic_section(msg: dict, is_cold: bool = True) -> str:
+    """构建 wake_text 的动态部分
+
+    Args:
+        is_cold: True=冷启动完整模板, False=热Session精简模板
+    """
+    c = _extract_common_context(msg)
+    if is_cold:
+        return _build_cold_section(c)
+    return _build_hot_section(c)
+
+
+def _build_cold_section(c: dict) -> str:
+    """冷 Session 完整模板：包含身份、成员、完整操作命令"""
+    my_name = MY_PROFILE.get('display_name', '未知')
+    my_desc = MY_PROFILE.get('description', '')
+    members_str = format_members_for_prompt(c["group_members"])
+    history_str = format_history_for_prompt(c["recent_history"])
+    tasks_str = format_tasks_for_prompt(c["group_tasks"], c["group_members"])
+    date_ymd = datetime.now().strftime("%Y/%m/%d")
+    group_id = c["group_id"]
+    chat_type_hint = " | **一对一**" if c["is_one_on_one"] else ""
 
     return f"""===== 群聊任务开始 [group:{group_id}] =====
-⚠️ 以下内容来自群「{group_name}」，请仅处理本群消息，处理完毕后等待下一条群聊任务。
+⚠️ 来自群「{c["group_name"]}」，仅处理本群消息，处理完等待下一条。
+
+PY = {_PY_CMD}
 
 == 身份 ==
 你是 **{my_name}**{"（" + my_desc + "）" if my_desc else ""}
 群成员: {members_str}
 
 == 状态 ==
-响应模式: {response_mode} | 被@: {"是" if is_mentioned else "否"} | 来自主人: {"是 👑" if from_owner else "否"} | 信任等级: {trust_display}{chat_type_hint}
-{auth_block}
+{c["response_mode"]} | @:{"是" if c["is_mentioned"] else "否"}{c["mention_detail"]} | 主人:{"是👑" if c["from_owner"] else "否"} | {c["trust_display"]} | lang:{c["language"]}{chat_type_hint}
+{c["auth_block"]}
 == 任务看板 ==
 {tasks_str}
 
-== 最近对话（{history_count} 条） ==
+== 最近对话（{len(c["recent_history"])} 条） ==
 {history_str}
 
-== 本地记录路径 ==
-{_SKILL_DIR_STR}/imclaw_processed/{date_ymd}/{group_id}.jsonl
-
 == 消息 ==
-群聊: {group_name}
-发送者: {sender}{"（你的主人）" if from_owner else ""}
-内容: {content}
+{c["sender"]}{"👑" if c["from_owner"] else ""}: {c["content"]}{c["attachment_block"]}
 
 == 操作 ==
-回复: cd {_SKILL_DIR_STR}{_CMD_SEP}{_VENV_PY} reply.py "回复内容" --group {group_id}
-静默: cd {_SKILL_DIR_STR}{_CMD_SEP}{_VENV_PY} -c "from reply import clear_queue; clear_queue('{group_id}')"
-任务: cd {_SKILL_DIR_STR}{_CMD_SEP}{_VENV_PY} task.py --list --group {group_id}
-📖 完整操作指令与任务规则见: {_RULES_PATH}
+回复: PY reply.py "内容" --group {group_id}
+静默: PY -c "from reply import clear_queue; clear_queue('{group_id}')"
+任务: PY task.py --list --group {group_id}
+本地记录: imclaw_processed/{date_ymd}/{group_id}.jsonl
+📖 操作参考: {_RULES_REF_PATH}
 ===== 群聊任务结束 [group:{group_id}] ====="""
+
+
+def _build_hot_section(c: dict) -> str:
+    """热 Session 精简模板：省略已知的身份/成员/完整命令"""
+    history_str = format_history_for_prompt(c["recent_history"])
+    tasks_str = format_tasks_for_prompt(c["group_tasks"], c["group_members"])
+    group_id = c["group_id"]
+    chat_type_hint = " | **一对一**" if c["is_one_on_one"] else ""
+
+    # 任务看板：只在有活跃任务时显示
+    active_count = sum(1 for t in c["group_tasks"]
+                       if t.get("status") in ("open", "claimed", "in_progress"))
+    tasks_block = f"\n任务: {tasks_str}\n" if active_count > 0 else ""
+
+    return f"""===== [group:{group_id}] {c["group_name"]} =====
+{c["response_mode"]} | @:{"是" if c["is_mentioned"] else "否"}{c["mention_detail"]} | 主人:{"是👑" if c["from_owner"] else "否"} | {c["trust_display"]} | lang:{c["language"]}{chat_type_hint}
+{c["auth_block"]}
+对话（最近 {len(c["recent_history"])} 条）:
+{history_str}
+{tasks_block}
+{c["sender"]}{"👑" if c["from_owner"] else ""}: {c["content"]}{c["attachment_block"]}
+
+回复: PY reply.py "内容" --group {group_id}
+===== [end:{group_id}] ====="""
+
+
+def _check_cold_status(group_id: str) -> bool:
+    """判断是否为冷 Session（含周期性刷新逻辑）
+
+    冷 Session 条件（满足任一即为冷）：
+    1. 超过 _WARM_THRESHOLD 未活动
+    2. 累计 wake 次数达到 _WARM_REFRESH_INTERVAL 的倍数（周期性刷新上下文）
+    """
+    wake_key = f"imclaw:{group_id}"
+    now = time.time()
+    session = _warm_sessions.get(wake_key)
+
+    if session is None:
+        _warm_sessions[wake_key] = {"last_wake": now, "count": 1}
+        return True
+
+    elapsed = now - session["last_wake"]
+    session["last_wake"] = now
+    session["count"] += 1
+
+    if elapsed > _WARM_THRESHOLD:
+        session["count"] = 1
+        return True
+
+    if session["count"] % _WARM_REFRESH_INTERVAL == 0:
+        return True
+
+    return False
 
 
 def wake_session_for_group(msg: dict):
@@ -777,22 +940,17 @@ def wake_session_for_group(msg: dict):
             return
 
         gateway_url = os.environ.get("OPENCLAW_GATEWAY_URL", "http://127.0.0.1:18789")
-        wake_key = f"imclaw:{group_id}"
-
-        now = time.time()
-        last_wake = _warm_sessions.get(wake_key, 0)
-        is_cold = (now - last_wake) > _WARM_THRESHOLD
-        _warm_sessions[wake_key] = now
+        is_cold = _check_cold_status(group_id)
 
         owner_hint = " 👑 [来自主人]" if from_owner else ""
         mentioned_hint = " 📢 [被@提及]" if is_mentioned else ""
-        dynamic = _build_dynamic_section(msg)
+        dynamic = _build_dynamic_section(msg, is_cold=is_cold)
 
         if is_cold:
             wake_text = f"""[IMClaw] 收到新消息（群聊激活）{owner_hint}{mentioned_hint}
 
 规则文件: {_RULES_PATH}
-请先阅读规则文件，然后处理以下消息。所有命令在 cd {_SKILL_DIR_STR} 下执行。
+请先阅读规则文件，然后处理以下消息。
 
 {dynamic}"""
         else:
@@ -1385,8 +1543,13 @@ def handle(msg):
         
         # 冷/热 Session 差异化拉取：冷 Session 拉更多历史建立上下文
         session_key = f"imclaw:{group_id}"
-        is_cold = (time.time() - _warm_sessions.get(session_key, 0)) > _WARM_THRESHOLD
-        history_limit = 30 if is_cold else 15
+        session = _warm_sessions.get(session_key)
+        is_cold_preview = (
+            session is None
+            or (time.time() - session["last_wake"]) > _WARM_THRESHOLD
+            or session["count"] % _WARM_REFRESH_INTERVAL == _WARM_REFRESH_INTERVAL - 1
+        )
+        history_limit = 30 if is_cold_preview else 10
         
         recent_history = _history_cache.get(group_id)
         if recent_history is None:

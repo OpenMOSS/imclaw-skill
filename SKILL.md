@@ -196,16 +196,20 @@ print('RESTART_NEEDED' if not (hooks_ok and session_ok) else 'NO_RESTART')
 3. 设置名称和描述
 4. 将生成的 Token 粘贴给我
 
+另外，请告诉我你希望 Agent 使用什么语言回复？
+（默认中文 zh-CN，可选：en / ja / ko / fr / de 等）
+
 等待您提供 Token...
 ```
 
 ### 步骤 2：配置 Token（Agent 自动执行）
 
-将用户提供的 Token 写入 `~/.openclaw/gateway.env`：
+将用户提供的 Token 和语言偏好写入 `~/.openclaw/gateway.env`：
 ```bash
 GATEWAY_ENV="$HOME/.openclaw/gateway.env"
 mkdir -p "$(dirname "$GATEWAY_ENV")"
 echo 'IMCLAW_TOKEN=<用户提供的 Token>' >> "$GATEWAY_ENV"
+echo 'IMCLAW_DEFAULT_LANGUAGE=<用户选择的语言，如 zh-CN / en>' >> "$GATEWAY_ENV"
 ```
 
 **验证：**
@@ -437,6 +441,7 @@ jq '.session.reset.idleMinutes' ~/.openclaw/openclaw.json     # 应返回 1440
 | `OPENCLAW_GATEWAY_URL` | 否 | OpenClaw Gateway 地址 | `http://127.0.0.1:18789` |
 | `IMCLAW_SKILL_DIR` | 否 | Skill 目录路径（自动检测） | `~/.openclaw/workspace/skills/imclaw` |
 | `IMCLAW_TOKEN` | **是** | Agent Token（放入 `~/.openclaw/gateway.env`） | 无 |
+| `IMCLAW_DEFAULT_LANGUAGE` | 否 | Agent 回复语言（首次配置时设置） | `zh-CN` |
 | `IMCLAW_HUB_URL` | 否 | Hub 地址 | `https://imclaw-server.app.mosi.cn` |
 | `IMCLAW_ENV` | 否 | 多环境切换（设置后优先读取 `{KEY}_{ENV}`，如 `TEST`） | 无 |
 | `IMCLAW_TOKEN_TEST` | 否 | 测试环境 Token（需配合 `IMCLAW_ENV=TEST`） | 无 |
@@ -671,7 +676,8 @@ skills/imclaw/
 │   └── group_settings.yaml # 群聊响应配置
 └── references/
     ├── api.md              # API 参考
-    └── session_rules.md    # Session 静态响应规则（安全/判断/操作指令/任务协调）
+    ├── session_rules.md    # Session 决策规则（安全/判断/任务/授权，冷启动必读）
+    └── session_rules_ref.md # 操作命令完整参考（按需读取）
 ```
 
 ### 消息归档说明
@@ -797,14 +803,16 @@ venv/bin/pip install requests websocket-client pyyaml
 ```bash
 #!/bin/bash
 # IMClaw Skill 一键配置脚本
-# 用法: ./setup.sh <agent-token>
+# 用法: ./setup.sh <agent-token> [language]
 
 set -e
 
 AGENT_TOKEN="${1:-}"
+LANGUAGE="${2:-zh-CN}"
 if [ -z "$AGENT_TOKEN" ]; then
     echo "❌ 请提供 Agent Token"
-    echo "用法: $0 <agent-token>"
+    echo "用法: $0 <agent-token> [language]"
+    echo "  language: zh-CN (默认), en, ja, ko, fr, de 等"
     exit 1
 fi
 
@@ -813,11 +821,12 @@ OPENCLAW_CONFIG="$HOME/.openclaw/openclaw.json"
 
 echo "=== IMClaw Skill 配置 ==="
 
-# 1. 配置 IMClaw Token（写入 gateway.env，推荐）
-echo "📝 配置 Token..."
+# 1. 配置 IMClaw Token + 语言（写入 gateway.env，推荐）
+echo "📝 配置 Token + 语言($LANGUAGE)..."
 GATEWAY_ENV="$HOME/.openclaw/gateway.env"
 mkdir -p "$(dirname "$GATEWAY_ENV")"
 grep -q "IMCLAW_TOKEN" "$GATEWAY_ENV" 2>/dev/null || echo "IMCLAW_TOKEN=$AGENT_TOKEN" >> "$GATEWAY_ENV"
+grep -q "IMCLAW_DEFAULT_LANGUAGE" "$GATEWAY_ENV" 2>/dev/null || echo "IMCLAW_DEFAULT_LANGUAGE=$LANGUAGE" >> "$GATEWAY_ENV"
 export IMCLAW_TOKEN="$AGENT_TOKEN"
 
 # 2. 生成 Hooks Token + 设置环境变量
