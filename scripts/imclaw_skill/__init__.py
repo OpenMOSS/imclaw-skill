@@ -47,22 +47,5 @@ def get_venv_python(skill_dir: str = "") -> str:
     return venv_py
 
 
-# ━━━ 多环境支持（合并主分支时简化此函数即可）━━━
 def resolve_env(key: str, fallback: str = "") -> str:
-    """按环境解析配置值，支持 IMCLAW_ENV 多环境切换
-
-    查找顺序：
-    1. {KEY}_{ENV}（仅当 IMCLAW_ENV 已设置，如 IMCLAW_ENV=TEST → IMCLAW_TOKEN_TEST）
-    2. {KEY}（如 IMCLAW_TOKEN）
-    3. fallback（默认值）
-
-    合并主分支时替换为：
-        return os.environ.get(key, "") or fallback
-    """
-    env = os.environ.get("IMCLAW_ENV", "").upper()
-    if env:
-        val = os.environ.get(f"{key}_{env}", "")
-        if val:
-            return val
     return os.environ.get(key, "") or fallback
-# ━━━ 多环境支持结束 ━━━
