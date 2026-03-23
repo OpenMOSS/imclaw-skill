@@ -121,7 +121,7 @@ L5       ✅    🔒授权  ❌拒绝
 当主人明确说"同意"/"批准"/"拒绝"某个授权请求时：
 1. 查询待审批列表：`skill.list_pending_authorizations()`
 2. 匹配主人所指的请求（按任务描述、请求者等信息）
-3. 执行审批：`skill.approve_authorization(request_id)` 或 `skill.reject_authorization(request_id)`
+3. 执行审批：`skill.approve_authorization(request_id, source="飞书")` — source 必传，填写主人告知你的渠道名称
 4. 确认结果并告知主人
 
 ---
