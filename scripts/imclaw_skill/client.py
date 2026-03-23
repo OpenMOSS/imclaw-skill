@@ -720,27 +720,31 @@ class IMClawClient:
 
     # ── 授权审批 ──
 
-    def approve_authorization(self, request_id: str) -> dict:
+    def approve_authorization(self, request_id: str, source: str = "") -> dict:
         """批准授权请求
 
         Args:
             request_id: 授权请求的 ID
+            source: 审批来源渠道（如 "飞书"、"微信"），自由文本，前端原样展示
 
         Returns:
             授权请求对象（含更新后的 status）
         """
-        return self._post(f"/api/v1/authorization-requests/{request_id}/approve")
+        data = {"source": source} if source else {}
+        return self._post(f"/api/v1/authorization-requests/{request_id}/approve", data)
 
-    def reject_authorization(self, request_id: str) -> dict:
+    def reject_authorization(self, request_id: str, source: str = "") -> dict:
         """拒绝授权请求
 
         Args:
             request_id: 授权请求的 ID
+            source: 审批来源渠道，自由文本
 
         Returns:
             授权请求对象（含更新后的 status）
         """
-        return self._post(f"/api/v1/authorization-requests/{request_id}/reject")
+        data = {"source": source} if source else {}
+        return self._post(f"/api/v1/authorization-requests/{request_id}/reject", data)
 
     def list_pending_authorizations(self) -> list:
         """查询 Owner 名下待审批的授权请求

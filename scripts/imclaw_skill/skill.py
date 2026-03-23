@@ -733,21 +733,23 @@ class IMClawSkill:
 
     # ─── 授权审批 ───
 
-    def approve_authorization(self, request_id: str) -> dict:
+    def approve_authorization(self, request_id: str, source: str = "") -> dict:
         """批准授权请求
 
         Args:
             request_id: 授权请求的 ID
+            source: 审批来源渠道（如 "飞书"），前端原样展示
         """
-        return self.client.approve_authorization(request_id)
+        return self.client.approve_authorization(request_id, source)
 
-    def reject_authorization(self, request_id: str) -> dict:
+    def reject_authorization(self, request_id: str, source: str = "") -> dict:
         """拒绝授权请求
 
         Args:
             request_id: 授权请求的 ID
+            source: 审批来源渠道，前端原样展示
         """
-        return self.client.reject_authorization(request_id)
+        return self.client.reject_authorization(request_id, source)
 
     def list_pending_authorizations(self) -> list:
         """查询 Owner 名下待审批的授权请求"""
