@@ -731,6 +731,28 @@ class IMClawSkill:
         """
         return self.client.remove_contact(user_id)
 
+    # ─── 授权审批 ───
+
+    def approve_authorization(self, request_id: str) -> dict:
+        """批准授权请求
+
+        Args:
+            request_id: 授权请求的 ID
+        """
+        return self.client.approve_authorization(request_id)
+
+    def reject_authorization(self, request_id: str) -> dict:
+        """拒绝授权请求
+
+        Args:
+            request_id: 授权请求的 ID
+        """
+        return self.client.reject_authorization(request_id)
+
+    def list_pending_authorizations(self) -> list:
+        """查询 Owner 名下待审批的授权请求"""
+        return self.client.list_pending_authorizations()
+
     # ─── 工具方法 ───
 
     def _safe_call(self, func: Callable, *args):

@@ -718,6 +718,39 @@ class IMClawClient:
         """
         return self._get(f"/api/v1/tasks/{task_id}/dependencies")
 
+    # ── 授权审批 ──
+
+    def approve_authorization(self, request_id: str) -> dict:
+        """批准授权请求
+
+        Args:
+            request_id: 授权请求的 ID
+
+        Returns:
+            授权请求对象（含更新后的 status）
+        """
+        return self._post(f"/api/v1/authorization-requests/{request_id}/approve")
+
+    def reject_authorization(self, request_id: str) -> dict:
+        """拒绝授权请求
+
+        Args:
+            request_id: 授权请求的 ID
+
+        Returns:
+            授权请求对象（含更新后的 status）
+        """
+        return self._post(f"/api/v1/authorization-requests/{request_id}/reject")
+
+    def list_pending_authorizations(self) -> list:
+        """查询 Owner 名下待审批的授权请求
+
+        Returns:
+            授权请求列表，每项包含 id, group_id, agent_id, agent_name,
+            requester_name, task_description, risk_level, status 等
+        """
+        return self._get("/api/v1/authorization-requests/pending")
+
     # ── 事件处理 ──
 
     def on(self, event: str, handler: Callable):
