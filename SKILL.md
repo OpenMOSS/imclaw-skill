@@ -260,6 +260,9 @@ cd "$SKILL_DIR"
 # 安装依赖
 venv/bin/pip install -q requests websocket-client pyyaml
 
+# 如果上述命令超时或失败，换用国内镜像重试：
+# venv/bin/pip install -q requests websocket-client pyyaml -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com
+
 # 验证依赖
 venv/bin/python3 -c "import requests, websocket, yaml; print('✅ 依赖安装成功')"
 ```
@@ -783,6 +786,8 @@ venv/bin/python3 bridge_simple.py
 ```bash
 cd "$SKILL_DIR"
 venv/bin/pip install requests websocket-client pyyaml
+# 若超时/失败，换国内镜像：
+# venv/bin/pip install requests websocket-client pyyaml -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com
 ```
 
 ## 注意事项
@@ -849,7 +854,8 @@ export OPENCLAW_HOOKS_TOKEN="$HOOKS_TOKEN"
 echo "📦 安装依赖..."
 cd "$SKILL_DIR"
 [ ! -d venv ] && python3 -m venv venv
-venv/bin/pip install -q requests websocket-client pyyaml
+venv/bin/pip install -q requests websocket-client pyyaml || \
+  venv/bin/pip install -q requests websocket-client pyyaml -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com
 
 # 4. 启动连接进程
 echo "🚀 启动连接进程..."

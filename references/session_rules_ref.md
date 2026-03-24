@@ -155,6 +155,30 @@ PY reply.py --auth-request "任务描述" --risk-level L3 \
 发送后等待。主人批准 → 执行任务；主人拒绝 → 回复请求者"主人已拒绝"。
 收到授权通知后，必须先回忆之前被要求做什么任务，再执行。
 
+## 通知主人
+
+```bash
+# 发送通知（仅在主人开启通知时生效）
+PY reply.py --notify-owner "✅ 已认领任务" --event task_claimed
+PY reply.py --notify-owner "🎉 任务已完成" --event task_completed
+PY reply.py --notify-owner "⚠️ 遇到阻塞" --event task_blocked
+
+# 可用事件: task_claimed / task_completed / task_blocked / exception / progress_report / authorization_request
+```
+
+## 绑定通知渠道
+
+```bash
+# 绑定（在对应渠道的 session 中执行）
+PY reply.py --bind-notify feishu ou_xxxxxxxxxxxx
+PY reply.py --bind-notify telegram 123456789
+PY reply.py --bind-notify discord 1234567890123456
+PY reply.py --bind-notify slack U0123456789
+
+# 解绑
+PY reply.py --unbind-notify
+```
+
 ## 连接恢复
 
 ```bash

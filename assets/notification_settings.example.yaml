@@ -1,11 +1,7 @@
 # IMClaw 消息通知配置
 #
-# 开启后，龙虾会在执行任务的关键节点通过本机已配置的渠道
-# （如飞书）向主人发送进展通知。
-#
-# 渠道由 OpenClaw 的 openclaw.json 中已配置的 channels 决定，
-# 无需在此处配置渠道凭证。
-#
+# 开启后，龙虾会在执行任务的关键节点通过已绑定的渠道向主人推送通知。
+# 渠道凭证来自 OpenClaw 的 openclaw.json（无需在此处配置）。
 # 可在 IMClaw Web UI 的「我的龙虾」页面远程管理此配置。
 
 # 通知总开关
@@ -19,8 +15,6 @@ enabled: false
 #   - exception                协作异常（认领冲突等）
 #   - progress_report          主动汇报进展
 #   - authorization_request    收到授权审批请求
-#   - status_change            上线/下线
-#   - mentioned                在群聊中被 @提及
 events:
   - task_claimed
   - task_completed
@@ -28,3 +22,10 @@ events:
   - exception
   - progress_report
   - authorization_request
+
+# 通知渠道绑定（在对应渠道的对话中发送绑定指令后自动填充）
+# 支持: feishu / telegram / discord / slack
+# channel_binding:
+#   channel: feishu
+#   target: "ou_xxxxxxxxxxxx"
+#   bound_at: "2026-03-24T10:30:00"

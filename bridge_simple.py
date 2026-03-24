@@ -501,16 +501,31 @@ def _write_notification_settings(enabled: bool, events: list[str]) -> None:
     path.write_text(text, encoding="utf-8")
 
 
+def _read_channel_binding() -> dict | None:
+    path = _notification_yaml_path()
+    if not path.exists() or yaml is None:
+        return None
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        binding = raw.get("channel_binding")
+        if isinstance(binding, dict) and binding.get("channel") and binding.get("target"):
+            return binding
+        return None
+    except Exception:
+        return None
+
+
 def _on_hub_config_query(data: dict):
     req_id = data.get("request_id") or ""
     key = data.get("key", "")
     channels = _load_openclaw_channel_names()
     if key != "notification":
-        payload = {"enabled": False, "events": [], "available_channels": channels}
+        payload = {"enabled": False, "events": [], "available_channels": channels, "channel_binding": None}
     else:
         with _notification_file_lock:
             en, ev = _read_notification_settings()
-        payload = {"enabled": en, "events": ev, "available_channels": channels}
+            binding = _read_channel_binding()
+        payload = {"enabled": en, "events": ev, "available_channels": channels, "channel_binding": binding}
     try:
         skill.client.send_ws_json(
             {"type": "config_response", "request_id": req_id, "payload": payload}
@@ -935,6 +950,14 @@ def _extract_common_context(msg: dict) -> dict:
                 att_lines.append(f"  - [{att_type}]{size_str} {filename}")
         attachment_block = "\n附件:\n" + "\n".join(att_lines)
 
+    notify_enabled = False
+    notify_events: list[str] = []
+    try:
+        with _notification_file_lock:
+            notify_enabled, notify_events = _read_notification_settings()
+    except Exception:
+        pass
+
     return {
         "content": msg.get('content', '')[:2000],
         "sender": msg.get('sender_name', msg.get('sender_id', '未知')[:8]),
@@ -954,6 +977,8 @@ def _extract_common_context(msg: dict) -> dict:
         "attachment_block": attachment_block,
         "auth_block": _build_auth_block(trust_level, msg),
         "language": get_response_language(),
+        "notify_enabled": notify_enabled,
+        "notify_events": notify_events,
     }
 
 
@@ -979,6 +1004,16 @@ def _build_cold_section(c: dict) -> str:
     date_ymd = datetime.now().strftime("%Y/%m/%d")
     group_id = c["group_id"]
     chat_type_hint = " | **一对一**" if c["is_one_on_one"] else ""
+
+    notify_block = ""
+    if c["notify_enabled"] and c["notify_events"]:
+        ev_str = "/".join(c["notify_events"][:6])
+        notify_block = f"""
+== 通知主人 ==
+已开启 | 事件: {ev_str}
+通知: PY reply.py --notify-owner "内容" --event <事件>
+⚠️ 认领/完成/阻塞任务等关键节点必须通知（详见规则文件）
+"""
 
     return f"""===== 群聊任务开始 [group:{group_id}] =====
 ⚠️ 来自群「{c["group_name"]}」，仅处理本群消息，处理完等待下一条。
@@ -1006,8 +1041,7 @@ PY = {_PY_CMD}
 静默: PY -c "from reply import clear_queue; clear_queue('{group_id}')"
 任务: PY task.py --list --group {group_id}
 本地记录: imclaw_processed/{date_ymd}/{group_id}.jsonl
-📖 操作参考: {_RULES_REF_PATH}
-===== 群聊任务结束 [group:{group_id}] ====="""
+📖 操作参考: {_RULES_REF_PATH}{notify_block}===== 群聊任务结束 [group:{group_id}] ====="""
 
 
 def _build_hot_section(c: dict) -> str:
@@ -1022,6 +1056,10 @@ def _build_hot_section(c: dict) -> str:
                        if t.get("status") in ("open", "claimed", "in_progress"))
     tasks_block = f"\n任务: {tasks_str}\n" if active_count > 0 else ""
 
+    notify_hint = ""
+    if c["notify_enabled"]:
+        notify_hint = "\n通知主人: PY reply.py --notify-owner \"内容\" --event <事件>"
+
     return f"""===== [group:{group_id}] {c["group_name"]} =====
 {c["response_mode"]} | @:{"是" if c["is_mentioned"] else "否"}{c["mention_detail"]} | 主人:{"是👑" if c["from_owner"] else "否"} | {c["trust_display"]} | lang:{c["language"]}{chat_type_hint}
 {c["auth_block"]}
@@ -1030,7 +1068,7 @@ def _build_hot_section(c: dict) -> str:
 {tasks_block}
 {c["sender"]}{"👑" if c["from_owner"] else ""}: {c["content"]}{c["attachment_block"]}
 
-回复: PY reply.py "内容" --group {group_id}
+回复: PY reply.py "内容" --group {group_id}{notify_hint}
 ===== [end:{group_id}] ====="""
 
 

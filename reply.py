@@ -66,6 +66,7 @@ PROCESSED_DIR = SKILL_DIR / "imclaw_processed"
 
 SESSIONS_DIR = SKILL_DIR / "sessions"
 GROUP_SETTINGS_FILE = ASSETS_DIR / "group_settings.yaml"
+NOTIFICATION_SETTINGS_FILE = SKILL_DIR / "notification_settings.yaml"
 
 # 从 gateway.env 加载环境变量（fallback，确保独立调用时也能拿到 token）
 def _load_gateway_env():
@@ -816,6 +817,244 @@ def send_authorization_request(group_id: str, task_description: str,
         return False
 
 
+##############################################################################
+# ── Notification: Sender framework + notify_owner / bind_notify ──
+##############################################################################
+
+try:
+    import yaml as _yaml
+except ImportError:
+    _yaml = None  # type: ignore
+
+import threading as _threading
+import urllib.request
+import urllib.error
+
+
+def _load_notification_settings() -> dict:
+    if not NOTIFICATION_SETTINGS_FILE.exists():
+        return {"enabled": False, "events": [], "channel_binding": None}
+    if _yaml is None:
+        return {"enabled": False, "events": [], "channel_binding": None}
+    try:
+        raw = _yaml.safe_load(NOTIFICATION_SETTINGS_FILE.read_text(encoding="utf-8")) or {}
+        return {
+            "enabled": bool(raw.get("enabled", False)),
+            "events": raw.get("events") or [],
+            "channel_binding": raw.get("channel_binding"),
+        }
+    except Exception:
+        return {"enabled": False, "events": [], "channel_binding": None}
+
+
+def _save_notification_settings(data: dict) -> None:
+    if _yaml is None:
+        raise RuntimeError("PyYAML is required")
+    existing: dict = {}
+    if NOTIFICATION_SETTINGS_FILE.exists():
+        prev = _yaml.safe_load(NOTIFICATION_SETTINGS_FILE.read_text(encoding="utf-8"))
+        if isinstance(prev, dict):
+            existing = dict(prev)
+    existing.update(data)
+    text = _yaml.safe_dump(existing, allow_unicode=True, default_flow_style=False, sort_keys=False)
+    NOTIFICATION_SETTINGS_FILE.write_text(text, encoding="utf-8")
+
+
+def _load_openclaw_channels() -> dict:
+    try:
+        p = Path.home() / ".openclaw" / "openclaw.json"
+        if not p.exists():
+            return {}
+        cfg = json.loads(p.read_text(encoding="utf-8"))
+        return cfg.get("channels", {})
+    except Exception:
+        return {}
+
+
+class _NotifySender:
+    """Base class for channel-specific notification senders."""
+
+    def send(self, target: str, text: str) -> bool:
+        raise NotImplementedError
+
+
+class _FeishuSender(_NotifySender):
+    FEISHU_DOMAIN = "https://open.feishu.cn/open-apis"
+    LARK_DOMAIN = "https://open.larksuite.com/open-apis"
+
+    def __init__(self, channel_cfg: dict):
+        accounts = channel_cfg.get("accounts", {})
+        default_acct = channel_cfg.get("defaultAccount", "default")
+        acct = accounts.get(default_acct) or accounts.get("main") or {}
+        if not acct:
+            acct = next(iter(accounts.values()), {}) if accounts else {}
+        self.app_id = acct.get("appId") or channel_cfg.get("appId", "")
+        self.app_secret = acct.get("appSecret") or channel_cfg.get("appSecret", "")
+        domain_hint = acct.get("domain") or channel_cfg.get("domain", "feishu")
+        self.base = self.LARK_DOMAIN if domain_hint == "lark" else self.FEISHU_DOMAIN
+
+    def _get_tenant_token(self) -> str:
+        url = f"{self.base}/auth/v3/tenant_access_token/internal"
+        body = json.dumps({"app_id": self.app_id, "app_secret": self.app_secret}).encode()
+        req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+        if data.get("code") != 0:
+            raise RuntimeError(f"feishu auth failed: {data.get('msg')}")
+        return data["tenant_access_token"]
+
+    def send(self, target: str, text: str) -> bool:
+        open_id = target.replace("user:", "")
+        token = self._get_tenant_token()
+        url = f"{self.base}/im/v1/messages?receive_id_type=open_id"
+        body = json.dumps({
+            "receive_id": open_id,
+            "msg_type": "text",
+            "content": json.dumps({"text": text}),
+        }).encode()
+        req = urllib.request.Request(url, data=body, headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {token}",
+        })
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+        return data.get("code") == 0
+
+
+class _TelegramSender(_NotifySender):
+    def __init__(self, channel_cfg: dict):
+        self.token = channel_cfg.get("botToken") or channel_cfg.get("token", "")
+
+    def send(self, target: str, text: str) -> bool:
+        url = f"https://api.telegram.org/bot{self.token}/sendMessage"
+        body = json.dumps({"chat_id": target, "text": text}).encode()
+        req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+        return data.get("ok", False)
+
+
+class _DiscordSender(_NotifySender):
+    def __init__(self, channel_cfg: dict):
+        self.token = channel_cfg.get("botToken") or channel_cfg.get("token", "")
+
+    def send(self, target: str, text: str) -> bool:
+        url = f"https://discord.com/api/v10/channels/{target}/messages"
+        body = json.dumps({"content": text}).encode()
+        req = urllib.request.Request(url, data=body, headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bot {self.token}",
+        })
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return resp.status == 200
+
+
+class _SlackSender(_NotifySender):
+    def __init__(self, channel_cfg: dict):
+        self.token = channel_cfg.get("botToken") or channel_cfg.get("token", "")
+
+    def send(self, target: str, text: str) -> bool:
+        url = "https://slack.com/api/chat.postMessage"
+        body = json.dumps({"channel": target, "text": text}).encode()
+        req = urllib.request.Request(url, data=body, headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.token}",
+        })
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+        return data.get("ok", False)
+
+
+_SENDERS: dict[str, type[_NotifySender]] = {
+    "feishu": _FeishuSender,
+    "telegram": _TelegramSender,
+    "discord": _DiscordSender,
+    "slack": _SlackSender,
+}
+
+_SUPPORTED_CHANNELS = list(_SENDERS.keys())
+
+
+def notify_owner(text: str, event: str) -> bool:
+    """Send a notification to the owner via the bound channel.
+
+    Returns True on success, False otherwise (silently).
+    """
+    cfg = _load_notification_settings()
+    if not cfg.get("enabled"):
+        print("ℹ️ 通知未开启", file=sys.stderr)
+        return False
+    if event and event not in cfg.get("events", []):
+        print(f"ℹ️ 事件 {event} 不在通知列表中", file=sys.stderr)
+        return False
+    binding = cfg.get("channel_binding")
+    if not binding or not isinstance(binding, dict):
+        print("ℹ️ 未绑定通知渠道", file=sys.stderr)
+        return False
+
+    channel = binding.get("channel", "")
+    target = binding.get("target", "")
+    if not channel or not target:
+        print("ℹ️ 绑定信息不完整", file=sys.stderr)
+        return False
+
+    sender_cls = _SENDERS.get(channel)
+    if not sender_cls:
+        print(f"ℹ️ 不支持的渠道: {channel}", file=sys.stderr)
+        return False
+
+    oc_channels = _load_openclaw_channels()
+    channel_cfg = oc_channels.get(channel, {})
+    if not channel_cfg:
+        print(f"ℹ️ openclaw.json 中未找到 {channel} 配置", file=sys.stderr)
+        return False
+
+    try:
+        sender = sender_cls(channel_cfg)
+        ok = sender.send(target, text)
+        if ok:
+            print(f"✅ 通知已发送 ({channel})")
+        else:
+            print(f"⚠️ 通知发送失败 ({channel})", file=sys.stderr)
+        return ok
+    except Exception as e:
+        print(f"⚠️ 通知发送异常: {e}", file=sys.stderr)
+        return False
+
+
+def bind_notify(channel: str, target: str) -> bool:
+    """Bind a notification channel + target to notification_settings.yaml."""
+    if channel not in _SENDERS:
+        print(f"❌ 不支持的渠道: {channel}（支持: {', '.join(_SUPPORTED_CHANNELS)}）")
+        return False
+    if not target:
+        print("❌ 目标地址不能为空")
+        return False
+    try:
+        binding = {
+            "channel": channel,
+            "target": target,
+            "bound_at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
+        }
+        _save_notification_settings({"channel_binding": binding})
+        print(f"✅ 已绑定通知渠道: {channel} → {target}")
+        return True
+    except Exception as e:
+        print(f"❌ 绑定失败: {e}")
+        return False
+
+
+def unbind_notify() -> bool:
+    """Remove channel binding from notification_settings.yaml."""
+    try:
+        _save_notification_settings({"channel_binding": None})
+        print("✅ 已解除通知渠道绑定")
+        return True
+    except Exception as e:
+        print(f"❌ 解绑失败: {e}")
+        return False
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="IMClaw 快速回复脚本（支持文本和多媒体消息）",
@@ -857,6 +1096,11 @@ def main():
     parser.add_argument("--risk-level", default="L3", help="风险等级 (L0-L5, 默认 L3)")
     parser.add_argument("--requester-type", help="请求者类型 (user/agent)")
     parser.add_argument("--requester-id", help="请求者 ID")
+    parser.add_argument("--notify-owner", metavar="TEXT", help="向主人推送通知")
+    parser.add_argument("--event", default="progress_report", help="通知事件类型 (默认 progress_report)")
+    parser.add_argument("--bind-notify", nargs=2, metavar=("CHANNEL", "TARGET"),
+                        help="绑定通知渠道 (feishu/telegram/discord/slack) + 目标地址")
+    parser.add_argument("--unbind-notify", action="store_true", help="解绑通知渠道")
     
     args = parser.parse_args()
     
@@ -889,6 +1133,19 @@ def main():
             print()
         return
     
+    if args.notify_owner:
+        ok = notify_owner(args.notify_owner, args.event)
+        sys.exit(0 if ok else 1)
+
+    if args.bind_notify:
+        ch, tgt = args.bind_notify
+        ok = bind_notify(ch, tgt)
+        sys.exit(0 if ok else 1)
+
+    if args.unbind_notify:
+        ok = unbind_notify()
+        sys.exit(0 if ok else 1)
+
     if args.auth_request:
         if not args.group:
             print("❌ 授权请求必须指定 --group")
