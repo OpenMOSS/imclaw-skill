@@ -25,6 +25,11 @@ from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
 
+try:
+    import yaml
+except ImportError:
+    yaml = None  # type: ignore
+
 # 配置 logging（线程安全，替代 print）
 logging.basicConfig(
     level=logging.INFO,
@@ -420,6 +425,136 @@ def _read_skill_version() -> str:
 
 SKILL_VERSION = _read_skill_version()
 
+_notification_file_lock = threading.Lock()
+
+_NOTIFICATION_DEFAULT_EVENTS = [
+    "task_claimed",
+    "task_completed",
+    "task_blocked",
+    "exception",
+    "progress_report",
+    "authorization_request",
+    "status_change",
+    "mentioned",
+]
+
+
+def _notification_yaml_path() -> Path:
+    return SKILL_DIR / "notification_settings.yaml"
+
+
+def _load_openclaw_channel_names() -> list[str]:
+    """扫描 ~/.openclaw/openclaw.json 的 channels 键名作为可选通知渠道。"""
+    try:
+        p = Path.home() / ".openclaw" / "openclaw.json"
+        if not p.exists():
+            return []
+        cfg = json.loads(p.read_text(encoding="utf-8"))
+        ch = cfg.get("channels")
+        if isinstance(ch, dict):
+            return sorted(ch.keys())
+        return []
+    except Exception as e:
+        logger.warning(f"⚠️ 读取 openclaw.json channels 失败: {e}")
+        return []
+
+
+def _read_notification_settings() -> tuple[bool, list[str]]:
+    path = _notification_yaml_path()
+    enabled = False
+    events = list(_NOTIFICATION_DEFAULT_EVENTS)
+    if not path.exists():
+        return enabled, events
+    if yaml is None:
+        logger.warning("⚠️ PyYAML 未安装，无法读取 notification_settings.yaml")
+        return enabled, events
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        if not isinstance(raw, dict):
+            return enabled, events
+        enabled = bool(raw.get("enabled", False))
+        ev = raw.get("events")
+        if isinstance(ev, list):
+            events = [str(x) for x in ev if x is not None]
+        else:
+            events = list(_NOTIFICATION_DEFAULT_EVENTS)
+        return enabled, events
+    except Exception as e:
+        logger.warning(f"⚠️ 读取通知配置失败: {e}")
+        return False, list(_NOTIFICATION_DEFAULT_EVENTS)
+
+
+def _write_notification_settings(enabled: bool, events: list[str]) -> None:
+    if yaml is None:
+        raise RuntimeError("PyYAML is required to write notification_settings.yaml")
+    path = _notification_yaml_path()
+    data: dict = {}
+    if path.exists():
+        prev = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if isinstance(prev, dict):
+            data = dict(prev)
+    data["enabled"] = bool(enabled)
+    data["events"] = list(events)
+    text = yaml.safe_dump(
+        data, allow_unicode=True, default_flow_style=False, sort_keys=False
+    )
+    path.write_text(text, encoding="utf-8")
+
+
+def _on_hub_config_query(data: dict):
+    req_id = data.get("request_id") or ""
+    key = data.get("key", "")
+    channels = _load_openclaw_channel_names()
+    if key != "notification":
+        payload = {"enabled": False, "events": [], "available_channels": channels}
+    else:
+        with _notification_file_lock:
+            en, ev = _read_notification_settings()
+        payload = {"enabled": en, "events": ev, "available_channels": channels}
+    try:
+        skill.client.send_ws_json(
+            {"type": "config_response", "request_id": req_id, "payload": payload}
+        )
+    except Exception as e:
+        logger.warning(f"⚠️ 发送 config_response 失败: {e}")
+
+
+def _on_hub_config_update(data: dict):
+    req_id = data.get("request_id") or ""
+    key = data.get("key", "")
+    ack: dict = {"success": False, "error": ""}
+    try:
+        if key != "notification":
+            ack["error"] = "unsupported key"
+        else:
+            inner = data.get("payload")
+            if isinstance(inner, str):
+                inner = json.loads(inner)
+            if not isinstance(inner, dict):
+                ack["error"] = "invalid payload"
+            else:
+                en = bool(inner.get("enabled", False))
+                ev = inner.get("events")
+                if not isinstance(ev, list):
+                    ack["error"] = "invalid events"
+                else:
+                    ev_clean = [str(x) for x in ev]
+                    with _notification_file_lock:
+                        _write_notification_settings(en, ev_clean)
+                    ack["success"] = True
+                    ack.pop("error", None)
+    except Exception as e:
+        logger.warning(f"⚠️ config_update 处理失败: {e}")
+        ack["success"] = False
+        ack["error"] = "write failed"
+    try:
+        skill.client.send_ws_json(
+            {"type": "config_update_ack", "request_id": req_id, "payload": ack}
+        )
+    except Exception as e:
+        logger.warning(f"⚠️ 发送 config_update_ack 失败: {e}")
+
+
 # 加载配置
 try:
     skill = IMClawSkill.from_env(skill_version=SKILL_VERSION)
@@ -427,6 +562,8 @@ try:
     logger.info(f"   Hub: {skill.config.hub_url}")
     if SKILL_VERSION:
         logger.info(f"   Skill 版本: v{SKILL_VERSION}")
+    skill.client.on("config_query", _on_hub_config_query)
+    skill.client.on("config_update", _on_hub_config_update)
 except Exception as e:
     logger.error(f"❌ 配置加载失败: {e}")
     sys.exit(1)

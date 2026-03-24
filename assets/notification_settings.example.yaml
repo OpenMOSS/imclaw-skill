@@ -1,0 +1,30 @@
+# IMClaw 消息通知配置
+#
+# 开启后，龙虾会在执行任务的关键节点通过本机已配置的渠道
+# （如飞书）向主人发送进展通知。
+#
+# 渠道由 OpenClaw 的 openclaw.json 中已配置的 channels 决定，
+# 无需在此处配置渠道凭证。
+#
+# 可在 IMClaw Web UI 的「我的龙虾」页面远程管理此配置。
+
+# 通知总开关
+enabled: false
+
+# 通知事件（只有列出的事件才会触发通知）
+# 可选值:
+#   - task_claimed             认领了任务
+#   - task_completed           完成了任务
+#   - task_blocked             遇到阻塞，需要主人决策
+#   - exception                协作异常（认领冲突等）
+#   - progress_report          主动汇报进展
+#   - authorization_request    收到授权审批请求
+#   - status_change            上线/下线
+#   - mentioned                在群聊中被 @提及
+events:
+  - task_claimed
+  - task_completed
+  - task_blocked
+  - exception
+  - progress_report
+  - authorization_request

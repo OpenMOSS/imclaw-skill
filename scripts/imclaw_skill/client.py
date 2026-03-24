@@ -223,6 +223,12 @@ class IMClawClient:
         payload = json.dumps({"type": "message", "payload": msg_payload})
         self._ws.send(payload)
 
+    def send_ws_json(self, obj: dict) -> None:
+        """向 Hub 发送任意 JSON 对象（如 config_response / config_update_ack）"""
+        if not self._connected.is_set() or not self._ws:
+            raise ConnectionError("Not connected")
+        self._ws.send(json.dumps(obj, ensure_ascii=False))
+
     def subscribe(self, group_id: str):
         """订阅群聊的实时消息"""
         if not self._connected.is_set() or not self._ws:
@@ -773,6 +779,8 @@ class IMClawClient:
           - "connected":        连接成功
           - "disconnected":     连接断开
           - "error":            连接错误 (error: Exception)
+          - "config_query":     Hub 查询本地配置 (data: dict，含 request_id, key)
+          - "config_update":    Hub 更新本地配置 (data: dict，含 request_id, key, payload)
         """
         if event not in self._handlers:
             self._handlers[event] = []
@@ -795,6 +803,15 @@ class IMClawClient:
         try:
             data = json.loads(message)
         except json.JSONDecodeError:
+            return
+
+        # Hub 下发的配置透传（无 payload 或 payload 非 dict，勿与聊天信封混淆）
+        top_type = data.get("type")
+        if top_type == "config_query":
+            self._emit("config_query", data)
+            return
+        if top_type == "config_update":
+            self._emit("config_update", data)
             return
 
         # Check if this is an envelope-wrapped message
