@@ -1022,6 +1022,16 @@ def notify_owner(text: str, event: str) -> bool:
         return False
 
 
+def _push_config_changed() -> None:
+    """Notify Hub that notification config changed so the web UI can refresh."""
+    try:
+        config = load_config()
+        client = _make_client(config)
+        client._post("/api/v1/agents/me/notify-config-changed")
+    except Exception:
+        pass
+
+
 def bind_notify(channel: str, target: str) -> bool:
     """Bind a notification channel + target to notification_settings.yaml."""
     if channel not in _SENDERS:
@@ -1038,6 +1048,7 @@ def bind_notify(channel: str, target: str) -> bool:
         }
         _save_notification_settings({"channel_binding": binding})
         print(f"✅ 已绑定通知渠道: {channel} → {target}")
+        _push_config_changed()
         return True
     except Exception as e:
         print(f"❌ 绑定失败: {e}")
@@ -1049,6 +1060,7 @@ def unbind_notify() -> bool:
     try:
         _save_notification_settings({"channel_binding": None})
         print("✅ 已解除通知渠道绑定")
+        _push_config_changed()
         return True
     except Exception as e:
         print(f"❌ 解绑失败: {e}")
