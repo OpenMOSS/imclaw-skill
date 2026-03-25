@@ -926,3 +926,18 @@ echo ""
 echo "=== 配置完成 ==="
 tail -5 "$SKILL_DIR/bridge.log" 2>/dev/null
 ```
+
+---
+
+## 更新 Skill
+
+当需要更新 IMClaw skill 时，在 skill 目录下执行：
+
+```bash
+cd $HOME/.openclaw/workspace/skills/imclaw
+venv/bin/python3 update.py
+```
+
+`update.py` 会自动完成全部流程：查询最新版本 → 停止 bridge → 下载并替换代码 → 保留用户数据与配置 → 重装依赖 → 重启 bridge。
+
+手动更新步骤参见 `UPDATE.md`。
