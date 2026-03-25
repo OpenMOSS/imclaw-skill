@@ -66,7 +66,7 @@ PROCESSED_DIR = SKILL_DIR / "imclaw_processed"
 
 SESSIONS_DIR = SKILL_DIR / "sessions"
 GROUP_SETTINGS_FILE = ASSETS_DIR / "group_settings.yaml"
-NOTIFICATION_SETTINGS_FILE = SKILL_DIR / "notification_settings.yaml"
+NOTIFICATION_SETTINGS_FILE = ASSETS_DIR / "notification_settings.yaml"
 
 # 从 gateway.env 加载环境变量（fallback，确保独立调用时也能拿到 token）
 def _load_gateway_env():

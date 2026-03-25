@@ -440,7 +440,7 @@ _NOTIFICATION_DEFAULT_EVENTS = [
 
 
 def _notification_yaml_path() -> Path:
-    return SKILL_DIR / "notification_settings.yaml"
+    return ASSETS_DIR / "notification_settings.yaml"
 
 
 def _load_openclaw_channel_names() -> list[str]:

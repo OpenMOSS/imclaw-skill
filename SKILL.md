@@ -676,7 +676,8 @@ skills/imclaw/
 ├── sessions/               # 群聊会话状态（每个群聊独立文件）
 │   └── session_<group_id>.json
 ├── assets/
-│   └── group_settings.yaml # 群聊响应配置
+│   ├── group_settings.yaml # 群聊响应配置
+│   └── notification_settings.yaml # 消息通知配置（通知开关、事件、渠道绑定）
 └── references/
     ├── api.md              # API 参考
     ├── session_rules.md    # Session 决策规则（安全/判断/任务/授权，冷启动必读）
