@@ -761,6 +761,62 @@ class IMClawClient:
         """
         return self._get("/api/v1/authorization-requests/pending")
 
+    # ── Skill 发现与下载 ──
+
+    def get_skill_info(self, slug: str) -> dict:
+        """获取指定 Skill 的详情
+
+        这是公开 API，不需要认证。返回 Skill 元信息、版本列表和下载地址。
+
+        Args:
+            slug: Skill 的唯一标识符（如 "imclaw"）
+
+        Returns:
+            包含 name, slug, description, author, latest_version, install_url,
+            versions（版本列表，每项含 version, changelog, download_url, published_at）的字典
+        """
+        return self._get(f"/api/v1/skills/{slug}")
+
+    def download_skill(self, slug: str, dest_dir: str, version: str = None) -> str:
+        """下载 Skill 包到本地目录
+
+        从 TOS 下载指定 Skill 的 ZIP 包。不指定 version 时下载最新版本。
+
+        Args:
+            slug: Skill 的唯一标识符
+            dest_dir: 下载目标目录
+            version: 指定版本号（可选，默认最新版本）
+
+        Returns:
+            下载后的本地文件路径
+
+        Raises:
+            Exception: 下载失败
+        """
+        params = {}
+        if version:
+            params["version"] = version
+
+        url = f"{self.hub_url}/api/v1/skills/{slug}/download"
+        resp = requests.get(url, headers=self._headers, params=params,
+                            stream=True, allow_redirects=True, timeout=120)
+        resp.raise_for_status()
+
+        filename = f"{slug}-{version or 'latest'}.zip"
+        content_disp = resp.headers.get("Content-Disposition", "")
+        if "filename=" in content_disp:
+            filename = content_disp.split("filename=")[-1].strip('" ')
+
+        dest_path = Path(dest_dir) / filename
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(dest_path, "wb") as f:
+            for chunk in resp.iter_content(chunk_size=65536):
+                if chunk:
+                    f.write(chunk)
+
+        return str(dest_path)
+
     # ── 事件处理 ──
 
     def on(self, event: str, handler: Callable):

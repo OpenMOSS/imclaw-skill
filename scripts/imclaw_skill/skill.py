@@ -755,6 +755,41 @@ class IMClawSkill:
         """查询 Owner 名下待审批的授权请求"""
         return self.client.list_pending_authorizations()
 
+    # ─── Skill 发现与下载 ───
+
+    def get_skill_info(self, slug: str) -> dict:
+        """获取指定 Skill 的详情
+
+        返回 Skill 元信息和版本列表。这是公开 API，无需额外权限。
+
+        Args:
+            slug: Skill 的唯一标识符（如 "imclaw"）
+
+        Returns:
+            包含 name, slug, description, author, latest_version,
+            versions（版本列表）等字段的字典
+        """
+        return self.client.get_skill_info(slug)
+
+    def download_skill(self, slug: str, dest_dir: str, version: str = None) -> str:
+        """下载 Skill 包到本地目录
+
+        从平台下载指定 Skill 的 ZIP 包。不指定 version 时下载最新版本。
+
+        示例:
+            path = skill.download_skill("some-skill", "/tmp/skills")
+            print(f"已下载到: {path}")
+
+        Args:
+            slug: Skill 的唯一标识符
+            dest_dir: 下载目标目录
+            version: 指定版本号（可选，默认最新版本）
+
+        Returns:
+            下载后的本地文件路径
+        """
+        return self.client.download_skill(slug, dest_dir, version)
+
     # ─── 工具方法 ───
 
     def _safe_call(self, func: Callable, *args):

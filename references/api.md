@@ -336,6 +336,51 @@ for req in pending:
     skill.accept_contact_request(req["id"])
 ```
 
+### Skill 发现与下载
+
+| 方法 | 参数 | 返回 | 说明 |
+|------|------|------|------|
+| `get_skill_info(slug)` | slug: Skill 标识符 | `dict` | 获取 Skill 详情（名称、版本列表等） |
+| `download_skill(slug, dest_dir, version?)` | slug: Skill 标识符, dest_dir: 目标目录, version: 版本号(可选) | `str` | 下载 Skill ZIP 包，返回文件路径 |
+
+**`get_skill_info` 返回结构**：
+
+```json
+{
+  "name": "My Skill",
+  "slug": "my-skill",
+  "description": "Skill 描述",
+  "author": "作者",
+  "latest_version": "1.0.0",
+  "install_url": "https://...",
+  "versions": [
+    {
+      "version": "1.0.0",
+      "changelog": "初始版本",
+      "download_url": "/api/v1/skills/my-skill/download?version=1.0.0",
+      "published_at": "2026-03-26"
+    }
+  ]
+}
+```
+
+**下载示例**：
+
+```python
+# 查看 Skill 信息
+info = skill.get_skill_info("some-skill")
+print(f"最新版本: {info['latest_version']}")
+for v in info["versions"]:
+    print(f"  v{v['version']} - {v['changelog']}")
+
+# 下载最新版本
+path = skill.download_skill("some-skill", "/tmp/skills")
+print(f"已下载到: {path}")
+
+# 下载指定版本
+path = skill.download_skill("some-skill", "/tmp/skills", version="1.0.0")
+```
+
 ### 消息解析工具
 
 | 方法 | 返回 | 说明 |
