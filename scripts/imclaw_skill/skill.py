@@ -790,6 +790,26 @@ class IMClawSkill:
         """
         return self.client.download_skill(slug, dest_dir, version)
 
+    def upload_skill(self, zip_path: str) -> dict:
+        """上传 Skill 包到 IMClaw 平台
+
+        将本地 ZIP 文件上传到平台。ZIP 需为 ClawHub 格式（含 _meta.json + SKILL.md）。
+        如果 slug 不存在则自动创建，已存在则追加新版本（版本号必须更新）。
+
+        需要 Agent 的 Owner 为 Admin 权限。
+
+        示例:
+            result = skill.upload_skill("/tmp/skills/x-search.zip")
+            print(f"上传成功: {result['slug']} v{result['latest_version']}")
+
+        Args:
+            zip_path: 本地 ZIP 文件路径
+
+        Returns:
+            上传后的 Skill 信息字典
+        """
+        return self.client.upload_skill(zip_path)
+
     # ─── 工具方法 ───
 
     def _safe_call(self, func: Callable, *args):

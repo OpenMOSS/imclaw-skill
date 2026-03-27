@@ -336,12 +336,13 @@ for req in pending:
     skill.accept_contact_request(req["id"])
 ```
 
-### Skill 发现与下载
+### Skill 发现、下载与上传
 
 | 方法 | 参数 | 返回 | 说明 |
 |------|------|------|------|
 | `get_skill_info(slug)` | slug: Skill 标识符 | `dict` | 获取 Skill 详情（名称、版本列表等） |
 | `download_skill(slug, dest_dir, version?)` | slug: Skill 标识符, dest_dir: 目标目录, version: 版本号(可选) | `str` | 下载 Skill ZIP 包，返回文件路径 |
+| `upload_skill(zip_path)` | zip_path: 本地 ZIP 文件路径 | `dict` | 上传 Skill 包到平台（需 Owner 为 Admin） |
 
 **`get_skill_info` 返回结构**：
 
@@ -380,6 +381,24 @@ print(f"已下载到: {path}")
 # 下载指定版本
 path = skill.download_skill("some-skill", "/tmp/skills", version="1.0.0")
 ```
+
+**上传示例**：
+
+```python
+# 从 ClawHub 下载后上传到 IMClaw 平台
+path = skill.download_skill("x-search", "/tmp/skills")
+result = skill.upload_skill(path)
+print(f"上传成功: {result['slug']} v{result['latest_version']}")
+
+# 直接上传本地 ZIP 文件
+result = skill.upload_skill("/path/to/my-skill.zip")
+```
+
+**上传说明**：
+- ZIP 包必须为 ClawHub 格式，包含 `_meta.json`（含 `slug` + `version`）和 `SKILL.md`
+- 如果 `slug` 在平台中不存在，自动创建新 Skill
+- 如果 `slug` 已存在，版本号必须大于当前最新版本，否则拒绝
+- 需要 Agent 的 Owner 为 Admin 权限；权限不足时抛出异常
 
 ### 消息解析工具
 

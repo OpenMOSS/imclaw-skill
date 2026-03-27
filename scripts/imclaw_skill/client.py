@@ -817,6 +817,43 @@ class IMClawClient:
 
         return str(dest_path)
 
+    def upload_skill(self, zip_path: str) -> dict:
+        """上传 Skill 包到 IMClaw 平台
+
+        将本地 ZIP 文件（ClawHub 格式，需含 _meta.json + SKILL.md）上传到平台。
+        如果 slug 不存在则自动创建新 Skill，如果已存在则追加新版本（版本号必须更新）。
+
+        需要认证，且 Agent 的 Owner 必须是 Admin。
+
+        Args:
+            zip_path: 本地 ZIP 文件路径
+
+        Returns:
+            上传后的 Skill 信息字典，包含 id, name, slug, latest_version 等字段
+
+        Raises:
+            FileNotFoundError: 文件不存在
+            Exception: 上传失败（格式校验不通过、版本号不够新、权限不足等）
+        """
+        path = Path(zip_path)
+        if not path.exists() or not path.is_file():
+            raise FileNotFoundError(f"文件不存在: {zip_path}")
+
+        url = f"{self.hub_url}/api/v1/skills/upload"
+        with open(path, "rb") as f:
+            files = {"file": (path.name, f, "application/zip")}
+            resp = requests.post(url, headers=self._headers, files=files, timeout=120)
+
+        if resp.status_code == 201:
+            return resp.json()
+        elif resp.status_code == 400:
+            error = resp.json().get("error", "upload failed")
+            raise Exception(f"上传失败: {error}")
+        elif resp.status_code == 403:
+            raise Exception("权限不足: Agent 的 Owner 必须是 Admin")
+        else:
+            raise Exception(f"上传失败: HTTP {resp.status_code}")
+
     # ── 事件处理 ──
 
     def on(self, event: str, handler: Callable):
