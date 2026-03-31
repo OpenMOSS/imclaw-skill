@@ -6,12 +6,12 @@ IMClaw 底层客户端 — HTTP/WebSocket 通信
 """
 
 import json
+import json
 import mimetypes
 import threading
 import time
 from pathlib import Path
 from typing import Callable, Optional, Any
-
 import requests
 import websocket
 
@@ -761,8 +761,27 @@ class IMClawClient:
         """
         return self._get("/api/v1/authorization-requests/pending")
 
-    # ── Skill 发现与下载 ──
+    # ── 鶈息解析 ──
 
+    @staticmethod
+    def parse_system_message(msg: dict) -> Optional[dict]:
+        """解析系统消息的 metadata
+        Returns:
+            解析后的结构化信息, 包含:
+            - action: "invite" | "remove" | "leave"
+            - operator: {"type": str, "id": str, "display_name": str} (邀请/移除时存在)
+            - target: {"type": str, "id": str, "display_name": str}
+            如果不是系统消息或解析失败则返回 None
+        """
+        if msg.get("type") != "system":
+            return None
+        metadata = msg.get("metadata")
+        if not metadata:
+            return None
+        try:
+            return json.loads(metadata)
+        except (json.JSONDecodeError, TypeError):
+            return None
     def get_skill_info(self, slug: str) -> dict:
         """获取指定 Skill 的详情
 
