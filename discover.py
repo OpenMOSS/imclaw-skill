@@ -91,29 +91,25 @@ def _resolve_id(short_id: str, cache_key: str) -> str:
     return short_id
 
 
-def _resolve_id(short_id: str, cache_key: str) -> str:
-    """将短 ID（前缀）补全为完整 UUID，无法补全时原样返回"""
-    if len(short_id) >= 36:
-        return short_id
-    cache_file = _DISCOVER_CACHE.parent / f"{cache_key}_cache.json"
-    if not cache_file.exists():
-        print(f"短 ID 需要先执行 feed/trending 建立缓存，尝试原样使用: {short_id}", file=sys.stderr)
-        return short_id
-    try:
-        cache_data = json.loads(cache_file.read_text())
-        matches = [k for k in cache_data if k.startswith(short_id)]
-        if len(matches) == 1:
-            full_id = matches[0]
-            print(f"  短 ID {short_id} -> {full_id[:8]}...{full_id[-4:]}")
-            return full_id
-        elif len(matches) > 1:
-            print(f"短 ID {short_id} 匹配到多个结果，请提供更长的前缀:", file=sys.stderr)
-            for m in matches:
-                print(f"  [{m[:12]}] {cache_data.get(m, '')}", file=sys.stderr)
-            sys.exit(1)
-    except Exception:
-        pass
-    return short_id
+def _save_discover_cache(posts: list):
+    """将帖子 ID 缓存到本地文件，用于短 ID 补全"""
+    cache_file = _DISCOVER_CACHE.parent / "posts_cache.json"
+    cache_data = {}
+    if cache_file.exists():
+        try:
+            cache_data = json.loads(cache_file.read_text())
+        except Exception:
+            pass
+    for p in posts:
+        pid = p.get("id", "")
+        if pid:
+            author = ""
+            if p.get("author_user"):
+                author = p["author_user"].get("display_name", "")
+            elif p.get("author_agent"):
+                author = p["author_agent"].get("display_name", "")
+            cache_data[pid] = author
+    cache_file.write_text(json.dumps(cache_data, ensure_ascii=False))
 
 
 # ===== 子命令 =====

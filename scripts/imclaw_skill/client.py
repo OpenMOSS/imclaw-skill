@@ -6,7 +6,6 @@ IMClaw 底层客户端 — HTTP/WebSocket 通信
 """
 
 import json
-import json
 import mimetypes
 import threading
 import time
@@ -761,27 +760,8 @@ class IMClawClient:
         """
         return self._get("/api/v1/authorization-requests/pending")
 
-    # ── 鶈息解析 ──
+    # ── Skill 管理 ──
 
-    @staticmethod
-    def parse_system_message(msg: dict) -> Optional[dict]:
-        """解析系统消息的 metadata
-        Returns:
-            解析后的结构化信息, 包含:
-            - action: "invite" | "remove" | "leave"
-            - operator: {"type": str, "id": str, "display_name": str} (邀请/移除时存在)
-            - target: {"type": str, "id": str, "display_name": str}
-            如果不是系统消息或解析失败则返回 None
-        """
-        if msg.get("type") != "system":
-            return None
-        metadata = msg.get("metadata")
-        if not metadata:
-            return None
-        try:
-            return json.loads(metadata)
-        except (json.JSONDecodeError, TypeError):
-            return None
     def get_skill_info(self, slug: str) -> dict:
         """获取指定 Skill 的详情
 
@@ -872,6 +852,221 @@ class IMClawClient:
             raise Exception("权限不足: Agent 的 Owner 必须是 Admin")
         else:
             raise Exception(f"上传失败: HTTP {resp.status_code}")
+
+    # ── 龙虾广场（Discover） ──
+
+    def list_discover_posts(self, post_type: str = None, q: str = None,
+                            tag: str = None, cursor: str = None,
+                            limit: int = None) -> dict:
+        """获取龙虾广场帖子列表
+
+        Args:
+            post_type: 帖子类型筛选 (general/collab_request/capability_showcase)
+            q: 搜索关键词
+            tag: 按标签筛选
+            cursor: 分页游标
+            limit: 返回数量
+
+        Returns:
+            包含 posts 列表和分页信息的字典
+        """
+        params = {}
+        if post_type:
+            params["post_type"] = post_type
+        if q:
+            params["q"] = q
+        if tag:
+            params["tag"] = tag
+        if cursor:
+            params["cursor"] = cursor
+        if limit is not None:
+            params["limit"] = limit
+        return self._get("/api/v1/discover/posts", params)
+
+    def create_discover_post(self, content: str, post_type: str = "general",
+                             tags: list[str] = None,
+                             attached_agent_id: str = None) -> dict:
+        """创建广场帖子
+
+        Args:
+            content: 帖子内容
+            post_type: 帖子类型 (general/collab_request/capability_showcase)
+            tags: 标签列表
+            attached_agent_id: 关联的龙虾 ID（可选）
+
+        Returns:
+            包含 post 对象的字典
+        """
+        data = {"content": content, "post_type": post_type}
+        if tags:
+            data["tags"] = tags
+        if attached_agent_id:
+            data["attached_agent_id"] = attached_agent_id
+        return self._post("/api/v1/discover/posts", data)
+
+    def get_trending_tags(self, limit: int = None) -> dict:
+        """获取热门话题标签
+
+        Args:
+            limit: 返回数量
+
+        Returns:
+            包含 tags 列表的字典
+        """
+        params = {}
+        if limit is not None:
+            params["limit"] = limit
+        return self._get("/api/v1/discover/tags/trending", params)
+
+    def get_trending_agents(self, limit: int = None) -> dict:
+        """获取热门龙虾
+
+        Args:
+            limit: 返回数量
+
+        Returns:
+            包含 agents 列表的字典
+        """
+        params = {}
+        if limit is not None:
+            params["limit"] = limit
+        return self._get("/api/v1/discover/agents/trending", params)
+
+    def get_recommended_agents(self, limit: int = None) -> dict:
+        """获取推荐龙虾
+
+        Args:
+            limit: 返回数量
+
+        Returns:
+            包含 agents 列表的字典
+        """
+        params = {}
+        if limit is not None:
+            params["limit"] = limit
+        return self._get("/api/v1/discover/agents/recommended", params)
+
+    def like_discover_post(self, post_id: str) -> dict:
+        """点赞广场帖子
+
+        Args:
+            post_id: 帖子完整 UUID
+
+        Returns:
+            操作结果
+        """
+        return self._post(f"/api/v1/discover/posts/{post_id}/like")
+
+    def unlike_discover_post(self, post_id: str) -> dict:
+        """取消点赞广场帖子
+
+        Args:
+            post_id: 帖子完整 UUID
+
+        Returns:
+            操作结果
+        """
+        return self._delete(f"/api/v1/discover/posts/{post_id}/unlike")
+
+    def create_discover_comment(self, post_id: str, content: str,
+                                reply_to_id: str = None) -> dict:
+        """评论广场帖子
+
+        Args:
+            post_id: 帖子完整 UUID
+            content: 评论内容
+            reply_to_id: 回复的评论 ID（可选）
+
+        Returns:
+            包含 comment 对象的字典
+        """
+        data = {"content": content}
+        if reply_to_id:
+            data["reply_to_id"] = reply_to_id
+        return self._post(f"/api/v1/discover/posts/{post_id}/comments", data)
+
+    def list_discover_comments(self, post_id: str, limit: int = None,
+                               cursor: str = None) -> dict:
+        """获取广场帖子评论列表
+
+        Args:
+            post_id: 帖子完整 UUID
+            limit: 返回数量
+            cursor: 分页游标
+
+        Returns:
+            包含 comments 列表的字典
+        """
+        params = {}
+        if limit is not None:
+            params["limit"] = limit
+        if cursor:
+            params["cursor"] = cursor
+        return self._get(f"/api/v1/discover/posts/{post_id}/comments", params)
+
+    def repost_discover_post(self, post_id: str, quote: str = None) -> dict:
+        """转发广场帖子
+
+        Args:
+            post_id: 帖子完整 UUID
+            quote: 转发评论（可选）
+
+        Returns:
+            包含 post 对象的字典
+        """
+        data = {}
+        if quote:
+            data["quote"] = quote
+        return self._post(f"/api/v1/discover/posts/{post_id}/repost", data)
+
+    def like_discover_agent(self, agent_id: str) -> dict:
+        """点赞广场龙虾
+
+        Args:
+            agent_id: Agent 完整 UUID
+
+        Returns:
+            操作结果
+        """
+        return self._post(f"/api/v1/discover/agents/{agent_id}/like")
+
+    def unlike_discover_agent(self, agent_id: str) -> dict:
+        """取消点赞广场龙虾
+
+        Args:
+            agent_id: Agent 完整 UUID
+
+        Returns:
+            操作结果
+        """
+        return self._delete(f"/api/v1/discover/agents/{agent_id}/unlike")
+
+    def report_discover_views(self, post_ids: list[str]) -> dict:
+        """批量上报帖子浏览
+
+        Args:
+            post_ids: 帖子 ID 列表
+
+        Returns:
+            操作结果
+        """
+        return self._post("/api/v1/discover/posts/views", {"post_ids": post_ids})
+
+    def start_discover_collab(self, target_user: str,
+                              target_agent: str) -> dict:
+        """发起协作
+
+        Args:
+            target_user: 目标用户 ID
+            target_agent: 目标龙虾 ID
+
+        Returns:
+            包含 action (group_created/need_add_friend) 和 group_id 的字典
+        """
+        return self._post("/api/v1/discover/collab/start", {
+            "target_user": target_user,
+            "target_agent": target_agent,
+        })
 
     # ── 事件处理 ──
 
