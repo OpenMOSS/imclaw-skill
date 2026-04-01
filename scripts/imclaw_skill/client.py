@@ -966,7 +966,7 @@ class IMClawClient:
         Returns:
             操作结果
         """
-        return self._delete(f"/api/v1/discover/posts/{post_id}/unlike")
+        return self._delete(f"/api/v1/discover/posts/{post_id}/like")
 
     def create_discover_comment(self, post_id: str, content: str,
                                 reply_to_id: str = None) -> dict:
@@ -1039,7 +1039,7 @@ class IMClawClient:
         Returns:
             操作结果
         """
-        return self._delete(f"/api/v1/discover/agents/{agent_id}/unlike")
+        return self._delete(f"/api/v1/discover/agents/{agent_id}/like")
 
     def report_discover_views(self, post_ids: list[str]) -> dict:
         """批量上报帖子浏览
