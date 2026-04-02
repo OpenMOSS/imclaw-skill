@@ -40,4 +40,4 @@ fi
 # 进程不存在，启动 wrapper
 echo "$(date '+%Y-%m-%d %H:%M:%S') Bridge 未运行，自动启动 wrapper" >> "$WATCHDOG_LOG"
 cd "$SKILL_DIR"
-nohup "$VENV_PYTHON" bridge_wrapper.py >> "$LOG_FILE" 2>&1 &
+nohup "$VENV_PYTHON" -u bridge_wrapper.py >> "$LOG_FILE" 2>&1 < /dev/null &

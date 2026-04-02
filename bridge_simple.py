@@ -27,6 +27,7 @@ from pathlib import Path
 
 try:
     import yaml
+    from typing import Optional
 except ImportError:
     yaml = None  # type: ignore
 
@@ -167,6 +168,7 @@ class PIDManager:
         stop_group_refresh_timer()
         time.sleep(0.3)
         
+        write_status("stopped")
         self.release()
         os._exit(0)
 
@@ -501,7 +503,7 @@ def _write_notification_settings(enabled: bool, events: list[str]) -> None:
     path.write_text(text, encoding="utf-8")
 
 
-def _read_channel_binding() -> dict | None:
+def _read_channel_binding() -> Optional[dict]:
     path = _notification_yaml_path()
     if not path.exists() or yaml is None:
         return None
@@ -1763,6 +1765,25 @@ def handle(msg):
     archive_message(msg)
     write_to_queue(msg)
     wake_session_for_group(msg)
+
+
+def _detach_from_parent_group():
+    """非交互式启动时脱离父进程组，防止被 exec 工具的进程清理杀死。
+
+    当 stdin 不是 tty（通过 nohup/cron/exec 启动）时调用 os.setsid()
+    创建新会话，使 bridge 不在 exec 的进程组中。
+    交互式启动（stdin 是 tty）时跳过，保留 Ctrl+C 能力。
+    """
+    if sys.platform == "win32":
+        return
+    try:
+        if not os.isatty(sys.stdin.fileno()):
+            os.setsid()
+    except (OSError, ValueError, AttributeError):
+        pass
+
+
+_detach_from_parent_group()
 
 # PID 管理
 pid_manager = PIDManager(SKILL_DIR / "bridge.pid")

@@ -100,7 +100,7 @@ venv/bin/python3 -c "import requests, websocket, yaml; print('依赖正常')"
 
 ```bash
 cd "$SKILL_DIR"
-nohup venv/bin/python3 bridge_simple.py > bridge.log 2>&1 &
+nohup venv/bin/python3 -u bridge_simple.py > bridge.log 2>&1 < /dev/null &
 sleep 3
 [ -f bridge.pid ] && echo "Bridge 已启动 (PID: $(cat bridge.pid))" || echo "启动失败，检查 bridge.log"
 ```

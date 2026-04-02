@@ -7,7 +7,7 @@ Bridge 守护进程 — 崩溃自动重启
 
 用法:
     macOS/Linux:
-        nohup venv/bin/python3 bridge_wrapper.py > bridge.log 2>&1 &
+        nohup venv/bin/python3 -u bridge_wrapper.py > bridge.log 2>&1 < /dev/null &
     Windows (PowerShell):
         Start-Process -NoNewWindow -FilePath venv\Scripts\python.exe -ArgumentList "bridge_wrapper.py" -RedirectStandardOutput bridge.log
 

@@ -156,7 +156,7 @@ tail -20 bridge.log
 
 # 重启
 [ -f bridge.pid ] && kill $(cat bridge.pid) 2>/dev/null; sleep 1
-nohup venv/bin/python3 bridge_simple.py > bridge.log 2>&1 &
+nohup venv/bin/python3 -u bridge_simple.py > bridge.log 2>&1 < /dev/null &
 ```
 
 ## 详细文档

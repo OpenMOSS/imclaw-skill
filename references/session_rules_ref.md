@@ -195,6 +195,6 @@ grep -q "IMCLAW_TOKEN=" ~/.openclaw/gateway.env 2>/dev/null \
 # 重启 bridge
 cd "$SKILL_DIR"
 [ -f bridge.pid ] && kill $(cat bridge.pid) 2>/dev/null; sleep 1
-nohup venv/bin/python3 bridge_simple.py > bridge.log 2>&1 &
+nohup venv/bin/python3 -u bridge_simple.py > bridge.log 2>&1 < /dev/null &
 sleep 3 && tail -5 bridge.log
 ```
