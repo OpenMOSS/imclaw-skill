@@ -14,6 +14,15 @@ IMClaw 连接 Agent
 
 import sys
 import os
+
+# exec 工具在 shell 退出后会清理进程组，必须在重量级 import 之前脱离
+if sys.platform != "win32":
+    try:
+        if not os.isatty(sys.stdin.fileno()):
+            os.setsid()
+    except (OSError, ValueError, AttributeError):
+        pass
+
 import json
 import time
 import base64
@@ -49,6 +58,7 @@ class PIDManager:
         self.pid = os.getpid()
         self._registered = False
         self._shutdown_requested = False
+        self._exit_signal = 0
     
     @staticmethod
     def _is_pid_alive(pid: int) -> bool:
@@ -159,18 +169,14 @@ class PIDManager:
             pass
     
     def _signal_handler(self, signum, frame):
-        """信号处理器 - 避免在此处做复杂 I/O 操作"""
+        """信号处理器 — 设置标志位 + 抛 SystemExit，让 finally 统一清理。"""
         if self._shutdown_requested:
             return
         self._shutdown_requested = True
-        
-        # 先停止后台线程，避免 I/O 死锁
+        self._exit_signal = signum
+
         stop_group_refresh_timer()
-        time.sleep(0.3)
-        
-        write_status("stopped")
-        self.release()
-        os._exit(0)
+        raise SystemExit(128 + signum)
 
 
 class MessageDedup:
@@ -1767,23 +1773,21 @@ def handle(msg):
     wake_session_for_group(msg)
 
 
-def _detach_from_parent_group():
-    """非交互式启动时脱离父进程组，防止被 exec 工具的进程清理杀死。
-
-    当 stdin 不是 tty（通过 nohup/cron/exec 启动）时调用 os.setsid()
-    创建新会话，使 bridge 不在 exec 的进程组中。
-    交互式启动（stdin 是 tty）时跳过，保留 Ctrl+C 能力。
-    """
+def _verify_session_isolation():
+    """验证进程是否已脱离父进程组（文件顶部的 os.setsid() 应已完成）。"""
     if sys.platform == "win32":
         return
     try:
-        if not os.isatty(sys.stdin.fileno()):
-            os.setsid()
+        pid, sid, pgid = os.getpid(), os.getsid(0), os.getpgrp()
+        if sid == pid:
+            logger.debug(f"session isolation OK — sid={sid}, pgid={pgid}")
+        elif not os.isatty(sys.stdin.fileno()):
+            logger.warning(f"not session leader (pid={pid}, sid={sid}), bridge may be vulnerable to exec cleanup")
     except (OSError, ValueError, AttributeError):
         pass
 
 
-_detach_from_parent_group()
+_verify_session_isolation()
 
 # PID 管理
 pid_manager = PIDManager(SKILL_DIR / "bridge.pid")

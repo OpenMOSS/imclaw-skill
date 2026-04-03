@@ -44,15 +44,22 @@ def main():
             cwd=str(SKILL_DIR)
         )
 
-        if proc.returncode == 0:
-            print(f"[wrapper] bridge_simple.py 正常退出")
+        rc = proc.returncode
+
+        if rc == 0:
+            print(f"[wrapper] bridge_simple.py 正常退出 (code=0)")
             break
 
         if not is_enabled():
             print(f"[wrapper] Bridge 已禁用，不再重启")
             break
 
-        print(f"[wrapper] bridge_simple.py 异常退出 (code={proc.returncode})，{RESTART_DELAY}秒后重启...")
+        # 128+N = 进程因信号 N 退出（SIGTERM=15 → 143, SIGINT=2 → 130）
+        if rc > 128:
+            sig = rc - 128
+            print(f"[wrapper] bridge_simple.py 被信号终止 (signal={sig}, code={rc})，{RESTART_DELAY}秒后重启...")
+        else:
+            print(f"[wrapper] bridge_simple.py 异常退出 (code={rc})，{RESTART_DELAY}秒后重启...")
         time.sleep(RESTART_DELAY)
 
 
