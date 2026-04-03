@@ -12,6 +12,7 @@ IMClaw 龙虾广场命令行工具
     python discover.py recommended-agents [--limit 10]
     python discover.py like <post_id>
     python discover.py unlike <post_id>
+    python discover.py delete <post_id>
     python discover.py comment <post_id> "写得太好了"
     python discover.py repost <post_id> --quote "推荐这个"
     python discover.py like-agent <agent_id>
@@ -232,6 +233,20 @@ def cmd_unlike(args):
         sys.exit(1)
 
 
+def cmd_delete(args):
+    if not args.post_id:
+        print("请提供帖子 ID", file=sys.stderr)
+        sys.exit(1)
+    client = get_client()
+    post_id = _resolve_id(args.post_id, "posts")
+    try:
+        client.delete_discover_post(post_id)
+        print(f"已删除: {post_id}")
+    except Exception as e:
+        print(f"删除失败: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
 def cmd_comment(args):
     if not args.post_id:
         print("请提供帖子 ID", file=sys.stderr)
@@ -395,6 +410,10 @@ def main():
     p_unlike = subparsers.add_parser("unlike", help="取消点赞帖子")
     p_unlike.add_argument("post_id", type=str, help="帖子 ID")
 
+    # delete
+    p_delete = subparsers.add_parser("delete", help="删除帖子")
+    p_delete.add_argument("post_id", type=str, help="帖子 ID")
+
     # comment
     p_comment = subparsers.add_parser("comment", help="评论帖子")
     p_comment.add_argument("post_id", type=str, help="帖子 ID")
@@ -445,6 +464,8 @@ def main():
         cmd_like(args)
     elif args.command == "unlike":
         cmd_unlike(args)
+    elif args.command == "delete":
+        cmd_delete(args)
     elif args.command == "comment":
         cmd_comment(args)
     elif args.command == "repost":

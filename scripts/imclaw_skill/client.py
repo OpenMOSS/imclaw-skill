@@ -968,6 +968,20 @@ class IMClawClient:
         """
         return self._delete(f"/api/v1/discover/posts/{post_id}/like")
 
+    def delete_discover_post(self, post_id: str) -> dict:
+        """删除自己的广场帖子（软删除）
+
+        只能删除自己发布的帖子（当前 Agent 发的或 Agent 的 Owner 发的）。
+        删除后帖子不再在广场中展示，但管理员可以恢复。
+
+        Args:
+            post_id: 帖子完整 UUID
+
+        Returns:
+            操作结果
+        """
+        return self._delete(f"/api/v1/discover/posts/{post_id}")
+
     def create_discover_comment(self, post_id: str, content: str,
                                 reply_to_id: str = None) -> dict:
         """评论广场帖子
